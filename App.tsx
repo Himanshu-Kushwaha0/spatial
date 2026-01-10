@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as Y from 'yjs';
 import { WebrtcProvider } from 'y-webrtc';
 import Draggable from 'react-draggable';
@@ -11,7 +11,6 @@ import {
   LucideUsers, 
   LucideSun, 
   LucideMoon, 
-  LucideMaximize2, 
   LucideGripHorizontal,
   LucideAppWindow,
   LucideMinimize2,
@@ -36,6 +35,8 @@ const App: React.FC = () => {
   const [isFloating, setIsFloating] = useState(false);
   const [isMiniMode, setIsMiniMode] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [peerCount, setPeerCount] = useState(0);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   const refs = {
     header: useRef<HTMLDivElement>(null),
@@ -45,18 +46,20 @@ const App: React.FC = () => {
     lastCursor: useRef<number>(0)
   };
 
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const ephemeralGc = useCallback(() => {
     const yMap = yDoc.getMap('elements');
     const now = Date.now();
-    let mutation = false;
-    
     yMap.forEach((val: any, key: string) => {
       if (val.isEphemeral && (now - val.timestamp >= EPHEMERAL_TTL)) {
         yMap.delete(key);
-        mutation = true;
       }
     });
-    return mutation;
   }, [yDoc]);
 
   useEffect(() => {
@@ -70,6 +73,7 @@ const App: React.FC = () => {
     const info = getRoomInfoFromHash();
     updateHash(info);
 
+    // HYBRID MESH DISCOVERY: Utilizing Google's Public Infrastructure & Multi-Relay Signaling
     const webrtcProvider = new WebrtcProvider(
       info.roomId,
       yDoc,
@@ -78,18 +82,24 @@ const App: React.FC = () => {
           'wss://y-webrtc-signaling-us.herokuapp.com',
           'wss://y-webrtc-signaling-eu.herokuapp.com',
           'wss://signaling.yjs.dev',
-          'wss://y-webrtc-ck.herokuapp.com'
+          'wss://y-webrtc-ck.herokuapp.com',
+          'wss://y-webrtc.fly.dev',
+          'wss://y-webrtc-us.fly.dev',
+          'wss://y-webrtc-signaling.onrender.com'
         ],
         peerOpts: {
           config: {
+            // GOOGLE GLOBAL STUN BACKBONE: Crucial for P2P across the open internet
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
               { urls: 'stun:stun1.l.google.com:19302' },
               { urls: 'stun:stun2.l.google.com:19302' },
               { urls: 'stun:stun3.l.google.com:19302' },
               { urls: 'stun:stun4.l.google.com:19302' },
+              { urls: 'stun:stun.services.mozilla.com' },
               { urls: 'stun:global.stun.twilio.com:3478' }
-            ]
+            ],
+            iceCandidatePoolSize: 12
           }
         }
       }
@@ -98,7 +108,8 @@ const App: React.FC = () => {
     const yElements = yDoc.getMap('elements');
     const syncElements = () => {
       const myId = yDoc.clientID.toString();
-      setElements(Array.from(yElements.values() as any).filter((el: any) => 
+      const all = Array.from(yElements.values() as any);
+      setElements(all.filter((el: any) => 
         !el.recipientId || el.recipientId === myId || el.authorId === myId
       ) as SpatialElement[]);
     };
@@ -113,7 +124,14 @@ const App: React.FC = () => {
       clientId: yDoc.clientID.toString()
     });
 
-    webrtcProvider.on('status', (e: { connected: boolean }) => setIsConnected(e.connected));
+    webrtcProvider.on('status', (e: { connected: boolean }) => {
+      setIsConnected(e.connected);
+    });
+
+    const peerCheck = setInterval(() => {
+      setPeerCount(webrtcProvider.room?.webrtcConns.size || 0);
+    }, 1500);
+
     webrtcProvider.awareness.on('change', () => {
       const states = webrtcProvider.awareness.getStates();
       const nextCursors: Record<string, CursorState> = {};
@@ -132,7 +150,11 @@ const App: React.FC = () => {
     });
 
     setProvider(webrtcProvider);
-    return () => { webrtcProvider.destroy(); yDoc.destroy(); };
+    return () => { 
+      clearInterval(peerCheck);
+      webrtcProvider.destroy(); 
+      yDoc.destroy(); 
+    };
   }, [yDoc, userName]);
 
   const addElement = useCallback((el: Omit<SpatialElement, 'author' | 'timestamp' | 'authorId'>) => {
@@ -148,7 +170,7 @@ const App: React.FC = () => {
 
   const updateCursor = useCallback((x: number, y: number) => {
     const now = Date.now();
-    if (now - refs.lastCursor.current < 16) return; // 60fps cap
+    if (now - refs.lastCursor.current < 16) return; 
     refs.lastCursor.current = now;
     provider?.awareness.setLocalStateField('cursor', { x, y });
   }, [provider]);
@@ -156,7 +178,7 @@ const App: React.FC = () => {
   const deleteElement = useCallback((id: string) => yDoc.getMap('elements').delete(id), [yDoc]);
 
   const handleFloating = async () => {
-    if (!('documentPictureInPicture' in window)) return alert("Nexus requirement: Chromium-based browser.");
+    if (!('documentPictureInPicture' in window)) return alert("Floating PiP requires a Chrome-based browser.");
     try {
       const pip = await (window as any).documentPictureInPicture.requestWindow({ width: 420, height: 720 });
       setIsFloating(true);
@@ -177,15 +199,15 @@ const App: React.FC = () => {
 
   if (!userName) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-black overflow-hidden">
-        <div className="w-full max-w-lg p-16 glass rounded-[60px] shadow-3xl animate-pop text-center border-indigo-500/20">
-          <LucideGlobe className="w-24 h-24 text-indigo-500 mx-auto mb-10 animate-spin-slow" />
-          <h1 className="text-5xl font-black text-white tracking-tighter mb-4">Spatial Hub</h1>
-          <p className="text-zinc-500 mb-12 uppercase tracking-[0.4em] text-[10px] font-bold">Global Mesh Relay</p>
-          <form onSubmit={e => { e.preventDefault(); if (tempName.trim()) { localStorage.setItem('ephemeral-username', tempName.trim()); setUserName(tempName.trim()); } }} className="space-y-8">
-            <input autoFocus value={tempName} onChange={e => setTempName(e.target.value)} placeholder="Node ID" className="w-full bg-white/5 border border-white/10 rounded-3xl p-7 text-white text-2xl text-center outline-none focus:border-indigo-500 transition-all" />
-            <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-7 rounded-3xl text-white font-black text-xl shadow-2xl flex items-center justify-center gap-4 active:scale-95 transition-all">
-              Join Nexus <LucideArrowRight className="w-6 h-6" />
+      <div className="h-screen w-full flex items-center justify-center bg-black overflow-hidden p-6">
+        <div className="w-full max-w-lg p-10 md:p-16 glass rounded-[40px] md:rounded-[60px] shadow-3xl animate-pop text-center border-indigo-500/20">
+          <LucideGlobe className="w-16 h-16 md:w-24 md:h-24 text-indigo-500 mx-auto mb-6 md:mb-10 animate-spin-slow" />
+          <h1 className="text-3xl md:text-5xl font-black text-white tracking-tighter mb-4">Spatial Hub</h1>
+          <p className="text-zinc-500 mb-8 md:mb-12 uppercase tracking-[0.4em] text-[8px] md:text-[10px] font-bold">Global Mesh Relay</p>
+          <form onSubmit={e => { e.preventDefault(); if (tempName.trim()) { localStorage.setItem('ephemeral-username', tempName.trim()); setUserName(tempName.trim()); } }} className="space-y-6 md:space-y-8">
+            <input autoFocus value={tempName} onChange={e => setTempName(e.target.value)} placeholder="Node Identity" className="w-full bg-white/5 border border-white/10 rounded-2xl md:rounded-3xl p-5 md:p-7 text-white text-xl md:text-2xl text-center outline-none focus:border-indigo-500 transition-all" />
+            <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-5 md:py-7 rounded-2xl md:rounded-3xl text-white font-black text-lg md:text-xl shadow-2xl flex items-center justify-center gap-4 active:scale-95 transition-all">
+              Join Mesh <LucideArrowRight className="w-6 h-6" />
             </button>
           </form>
         </div>
@@ -193,47 +215,66 @@ const App: React.FC = () => {
     );
   }
 
+  const actuallyConnected = isConnected && (peerCount > 0 || onlineUsers.length > 1);
+
   return (
     <div className={`h-screen w-screen overflow-hidden transition-colors duration-1000 ${isDarkMode ? 'bg-black' : 'bg-zinc-50'}`}>
-      <Draggable nodeRef={refs.header} handle=".drag">
-        <div ref={refs.header} className="absolute top-8 left-10 z-[3000] pointer-events-auto">
-          <div className={`flex items-center gap-5 px-8 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
-            <div className="drag cursor-grab active:cursor-grabbing p-1 text-zinc-700 hover:text-indigo-400"><LucideGripHorizontal className="w-5 h-5" /></div>
-            <div className={`flex items-center gap-3 ${isConnected ? 'text-emerald-500' : 'text-rose-500'}`}>
-              {isConnected ? <LucideWifi className="w-5 h-5" /> : <LucideWifiOff className="w-5 h-5 animate-pulse" />}
-              <span className="text-[10px] font-black uppercase tracking-[0.2em]">{isConnected ? 'Mesh Online' : 'Finding Signal...'}</span>
+      {isMobile ? (
+        <div className="absolute top-4 left-4 right-4 z-[3000] flex flex-col gap-2 pointer-events-none">
+          <div className={`pointer-events-auto flex items-center justify-between px-6 py-3 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-xl border border-white/10 backdrop-blur-md`}>
+            <div className="flex items-center gap-3">
+              {actuallyConnected ? <LucideWifi className="w-4 h-4 text-emerald-500" /> : <LucideWifiOff className="w-4 h-4 text-rose-500 animate-pulse" />}
+              <span className="text-[9px] font-black uppercase tracking-widest text-white/80">{onlineUsers.length} Nodes Tuned</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 transition-all">{isDarkMode ? <LucideSun className="w-5 h-5 text-amber-500" /> : <LucideMoon className="w-5 h-5 text-indigo-500" />}</button>
+              <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2 rounded-lg transition-all ${isMiniMode ? 'bg-indigo-600 text-white' : 'text-zinc-500'}`}><LucideMinimize2 className="w-5 h-5" /></button>
             </div>
           </div>
         </div>
-      </Draggable>
+      ) : (
+        <>
+          <Draggable nodeRef={refs.header} handle=".drag">
+            <div ref={refs.header} className="absolute top-8 left-10 z-[3000] pointer-events-auto">
+              <div className={`flex items-center gap-5 px-8 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
+                <div className="drag cursor-grab active:cursor-grabbing p-1 text-zinc-700 hover:text-indigo-400"><LucideGripHorizontal className="w-5 h-5" /></div>
+                <div className={`flex items-center gap-3 ${actuallyConnected ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  {actuallyConnected ? <LucideWifi className="w-5 h-5" /> : <LucideWifiOff className="w-5 h-5 animate-pulse" />}
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em]">{actuallyConnected ? 'Internet P2P Mesh' : isConnected ? 'Scanning Signaling...' : 'Mesh Offline'}</span>
+                </div>
+              </div>
+            </div>
+          </Draggable>
 
-      <Draggable nodeRef={refs.status} handle=".drag">
-        <div ref={refs.status} className="absolute top-8 left-1/2 -translate-x-1/2 z-[3000] pointer-events-auto">
-          <div className={`flex items-center gap-6 px-10 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
-            <div className="drag cursor-grab active:cursor-grabbing text-zinc-800"><LucideGripHorizontal className="w-4 h-4" /></div>
-            <div className="flex items-center gap-3 text-indigo-400">
-              <LucideRadio className="w-5 h-5 animate-pulse" />
-              <span className="text-[10px] font-black uppercase tracking-[0.3em]">Global Grid</span>
+          <Draggable nodeRef={refs.status} handle=".drag">
+            <div ref={refs.status} className="absolute top-8 left-1/2 -translate-x-1/2 z-[3000] pointer-events-auto">
+              <div className={`flex items-center gap-6 px-10 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
+                <div className="drag cursor-grab active:cursor-grabbing text-zinc-800"><LucideGripHorizontal className="w-4 h-4" /></div>
+                <div className="flex items-center gap-3 text-indigo-400">
+                  <LucideRadio className="w-5 h-5 animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.3em]">Nexus Core</span>
+                </div>
+                <div className="w-px h-5 bg-white/10" />
+                <div className="flex items-center gap-3 text-white">
+                  <LucideUsers className="w-4 h-4 text-zinc-600" />
+                  <span className="text-xs font-black">{onlineUsers.length} Active Peers</span>
+                </div>
+              </div>
             </div>
-            <div className="w-px h-5 bg-white/10" />
-            <div className="flex items-center gap-3 text-white">
-              <LucideUsers className="w-4 h-4 text-zinc-600" />
-              <span className="text-xs font-black">{onlineUsers.length} Nodes</span>
-            </div>
-          </div>
-        </div>
-      </Draggable>
+          </Draggable>
 
-      <Draggable nodeRef={refs.cluster} handle=".drag">
-        <div ref={refs.cluster} className="absolute top-8 right-10 z-[3000] pointer-events-auto">
-          <div className={`flex items-center gap-4 px-8 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
-            <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2.5 rounded-xl transition-all ${isMiniMode ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-indigo-400'}`}><LucideMinimize2 className="w-6 h-6" /></button>
-            <button onClick={handleFloating} className="p-2.5 text-zinc-500 hover:text-white transition-all"><LucideAppWindow className="w-6 h-6" /></button>
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2.5 transition-all">{isDarkMode ? <LucideSun className="w-6 h-6 text-amber-500" /> : <LucideMoon className="w-6 h-6 text-indigo-500" />}</button>
-            <div className="drag cursor-grab active:cursor-grabbing text-zinc-800"><LucideGripHorizontal className="w-4 h-4" /></div>
-          </div>
-        </div>
-      </Draggable>
+          <Draggable nodeRef={refs.cluster} handle=".drag">
+            <div ref={refs.cluster} className="absolute top-8 right-10 z-[3000] pointer-events-auto">
+              <div className={`flex items-center gap-4 px-8 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
+                <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2.5 rounded-xl transition-all ${isMiniMode ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-indigo-400'}`}><LucideMinimize2 className="w-6 h-6" /></button>
+                <button onClick={handleFloating} className="p-2.5 text-zinc-500 hover:text-white transition-all"><LucideAppWindow className="w-6 h-6" /></button>
+                <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2.5 transition-all">{isDarkMode ? <LucideSun className="w-6 h-6 text-amber-500" /> : <LucideMoon className="w-6 h-6 text-indigo-500" />}</button>
+                <div className="drag cursor-grab active:cursor-grabbing text-zinc-800"><LucideGripHorizontal className="w-4 h-4" /></div>
+              </div>
+            </div>
+          </Draggable>
+        </>
+      )}
 
       {!isMiniMode && (
         <Canvas 
@@ -250,7 +291,7 @@ const App: React.FC = () => {
       
       {isMiniMode && (
         <div className="absolute inset-0 flex items-center justify-center opacity-5 pointer-events-none">
-          <LucideZap className="w-96 h-96 text-indigo-500 animate-pulse" />
+          <LucideZap className="w-48 h-48 md:w-96 md:h-96 text-indigo-500 animate-pulse" />
         </div>
       )}
 
