@@ -1,17 +1,14 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import * as Y from 'yjs';
 import { WebrtcProvider } from 'y-webrtc';
 import Draggable from 'react-draggable';
-import { getRoomInfoFromHash, generateRoomInfo, updateHash } from './utils/crypto';
-import { SpatialElement, CursorState, RoomInfo, OnlineUser } from './types';
+import { getRoomInfoFromHash, updateHash } from './utils/crypto';
+import { SpatialElement, CursorState, OnlineUser } from './types';
 import Canvas from './components/Canvas';
 import ChatOverlay from './components/ChatOverlay';
 import { 
-  LucideTimer, 
-  LucideShare2, 
   LucideArrowRight, 
   LucideUsers, 
-  LucideHourglass, 
   LucideSun, 
   LucideMoon, 
   LucideMaximize2, 
@@ -25,78 +22,73 @@ import {
   LucideWifiOff
 } from 'lucide-react';
 
-const SESSION_TTL = 25 * 60 * 1000; 
-const EPHEMERAL_LIFESPAN = 5000; // 5 Seconds hard limit for Anywhere Chat
+const EPHEMERAL_TTL = 5000; 
 
 const App: React.FC = () => {
-  const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
-  const [userName, setUserName] = useState<string | null>(localStorage.getItem('ephemeral-username'));
+  const [userName, setUserName] = useState<string | null>(() => localStorage.getItem('ephemeral-username'));
   const [tempName, setTempName] = useState('');
   const [yDoc] = useState(() => new Y.Doc());
   const [provider, setProvider] = useState<WebrtcProvider | null>(null);
   const [elements, setElements] = useState<SpatialElement[]>([]);
   const [cursors, setCursors] = useState<Record<string, CursorState>>({});
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
-  const [timeLeft, setTimeLeft] = useState<number>(SESSION_TTL);
-  const [roomCreatedAt, setRoomCreatedAt] = useState<number | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
-  const [isOverlayMode, setIsOverlayMode] = useState(false);
   const [isFloating, setIsFloating] = useState(false);
   const [isMiniMode, setIsMiniMode] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
 
-  const headerRef = useRef<HTMLDivElement>(null);
-  const systemClusterRef = useRef<HTMLDivElement>(null);
-  const statusRef = useRef<HTMLDivElement>(null);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
-  const lastCursorUpdate = useRef<number>(0);
+  const refs = {
+    header: useRef<HTMLDivElement>(null),
+    cluster: useRef<HTMLDivElement>(null),
+    status: useRef<HTMLDivElement>(null),
+    chat: useRef<HTMLDivElement>(null),
+    lastCursor: useRef<number>(0)
+  };
 
-  // GLOBAL 5-SECOND DISAPPEARANCE ENGINE
-  useEffect(() => {
-    const yElements = yDoc.getMap('elements');
-    const gcInterval = setInterval(() => {
-      const now = Date.now();
-      elements.forEach(el => {
-        if (el.isEphemeral) {
-          const age = now - el.timestamp;
-          if (age >= EPHEMERAL_LIFESPAN) {
-            if (yElements.has(el.id)) {
-              yElements.delete(el.id);
-            }
-          }
-        }
-      });
-    }, 400); 
+  const ephemeralGc = useCallback(() => {
+    const yMap = yDoc.getMap('elements');
+    const now = Date.now();
+    let mutation = false;
     
-    return () => clearInterval(gcInterval);
-  }, [elements, yDoc]);
+    yMap.forEach((val: any, key: string) => {
+      if (val.isEphemeral && (now - val.timestamp >= EPHEMERAL_TTL)) {
+        yMap.delete(key);
+        mutation = true;
+      }
+    });
+    return mutation;
+  }, [yDoc]);
+
+  useEffect(() => {
+    const interval = setInterval(ephemeralGc, 500);
+    return () => clearInterval(interval);
+  }, [ephemeralGc]);
 
   useEffect(() => {
     if (!userName) return;
 
     const info = getRoomInfoFromHash();
-    setRoomInfo(info);
     updateHash(info);
 
-    // FIXED GLOBAL ROOM: Every user in the world lands here
-    const roomName = `spatial-hub-production-v2-nexus-global`;
-
     const webrtcProvider = new WebrtcProvider(
-      roomName,
+      info.roomId,
       yDoc,
       {
         signaling: [
-          'wss://signaling.yjs.dev',
+          'wss://y-webrtc-signaling-us.herokuapp.com',
           'wss://y-webrtc-signaling-eu.herokuapp.com',
-          'wss://y-webrtc-signaling-us.herokuapp.com'
+          'wss://signaling.yjs.dev',
+          'wss://y-webrtc-ck.herokuapp.com'
         ],
-        // CROSS-PLATFORM STUN: Essential for Android/iOS cellular data & Desktop firewalls
         peerOpts: {
           config: {
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
               { urls: 'stun:stun1.l.google.com:19302' },
-              { urls: 'stun:stun2.l.google.com:19302' }
+              { urls: 'stun:stun2.l.google.com:19302' },
+              { urls: 'stun:stun3.l.google.com:19302' },
+              { urls: 'stun:stun4.l.google.com:19302' },
+              { urls: 'stun:global.stun.twilio.com:3478' }
             ]
           }
         }
@@ -104,251 +96,174 @@ const App: React.FC = () => {
     );
 
     const yElements = yDoc.getMap('elements');
-    const yMetadata = yDoc.getMap('metadata');
-
-    const updateElements = () => {
-      const allElements = Array.from(yElements.values()) as unknown as SpatialElement[];
+    const syncElements = () => {
       const myId = yDoc.clientID.toString();
-      const filtered = allElements.filter(el => {
-        if (!el || typeof el !== 'object') return false;
-        if (!el.recipientId) return true;
-        return el.recipientId === myId || el.authorId === myId;
-      });
-      setElements(filtered);
+      setElements(Array.from(yElements.values() as any).filter((el: any) => 
+        !el.recipientId || el.recipientId === myId || el.authorId === myId
+      ) as SpatialElement[]);
     };
 
-    const updateMetadata = () => {
-      const created = yMetadata.get('createdAt');
-      if (created) setRoomCreatedAt(created as number);
-      else {
-        setTimeout(() => {
-          if (!yMetadata.get('createdAt')) {
-            const now = Date.now();
-            yMetadata.set('createdAt', now);
-            setRoomCreatedAt(now);
-          }
-        }, 500);
-      }
-    };
+    yElements.observe(syncElements);
+    syncElements();
 
-    yElements.observe(updateElements);
-    yMetadata.observe(updateMetadata);
-    updateElements();
-    updateMetadata();
-
-    const myColor = `hsl(${Math.random() * 360}, 70%, 60%)`;
+    const myColor = `hsl(${Math.random() * 360}, 85%, 65%)`;
     webrtcProvider.awareness.setLocalStateField('user', {
       name: userName,
       color: myColor,
       clientId: yDoc.clientID.toString()
     });
 
-    webrtcProvider.on('status', (event: any) => {
-      setIsConnected(event.connected);
-    });
-
+    webrtcProvider.on('status', (e: { connected: boolean }) => setIsConnected(e.connected));
     webrtcProvider.awareness.on('change', () => {
       const states = webrtcProvider.awareness.getStates();
-      const newCursors: Record<string, CursorState> = {};
-      const users: OnlineUser[] = [];
+      const nextCursors: Record<string, CursorState> = {};
+      const nextUsers: OnlineUser[] = [];
 
-      states.forEach((state: any, clientId: number) => {
-        if (state.user) {
-          users.push({
-            clientId: clientId.toString(),
-            name: state.user.name,
-            color: state.user.color
-          });
-
-          if (clientId !== yDoc.clientID && state.cursor) {
-            newCursors[clientId] = {
-              ...state.cursor,
-              name: state.user.name,
-              color: state.user.color,
-            };
+      states.forEach((s: any, id: number) => {
+        if (s.user) {
+          nextUsers.push({ clientId: id.toString(), name: s.user.name, color: s.user.color });
+          if (id !== yDoc.clientID && s.cursor) {
+            nextCursors[id] = { ...s.cursor, name: s.user.name, color: s.user.color };
           }
         }
       });
-      setCursors(newCursors);
-      setOnlineUsers(users);
+      setCursors(nextCursors);
+      setOnlineUsers(nextUsers);
     });
 
     setProvider(webrtcProvider);
-
-    return () => {
-      webrtcProvider.destroy();
-      yDoc.destroy();
-    };
+    return () => { webrtcProvider.destroy(); yDoc.destroy(); };
   }, [yDoc, userName]);
 
-  useEffect(() => {
-    if (!roomCreatedAt) return;
-    const timer = setInterval(() => {
-      const now = Date.now();
-      const elapsed = now - roomCreatedAt;
-      const remaining = Math.max(0, SESSION_TTL - elapsed);
-      setTimeLeft(remaining);
-      
-      if (remaining <= 0) {
-        const yMetadata = yDoc.getMap('metadata');
-        yMetadata.set('createdAt', Date.now());
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [roomCreatedAt, yDoc]);
-
-  const toggleOverlay = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      setIsOverlayMode(true);
-    } else {
-      document.exitFullscreen();
-      setIsOverlayMode(false);
-    }
-  };
-
-  const handleFloatingToggle = async () => {
-    if (window.self !== window.top) {
-      window.open(window.location.href, '_blank');
-      return;
-    }
-    if (!('documentPictureInPicture' in window)) {
-      alert("Floating windows require Chrome/Edge/Brave.");
-      return;
-    }
-    try {
-      const pipWindow = await (window as any).documentPictureInPicture.requestWindow({ width: 420, height: 700 });
-      setIsFloating(true);
-      [...document.styleSheets].forEach((ss) => {
-        try {
-          const style = document.createElement('style');
-          style.textContent = [...ss.cssRules].map((r) => r.cssText).join('');
-          pipWindow.document.head.appendChild(style);
-        } catch (e) {
-          if (ss.href) {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet'; link.href = ss.href;
-            pipWindow.document.head.appendChild(link);
-          }
-        }
-      });
-      if (chatContainerRef.current) pipWindow.document.body.appendChild(chatContainerRef.current);
-      pipWindow.addEventListener('pagehide', () => {
-        setIsFloating(false);
-        if (chatContainerRef.current) document.body.appendChild(chatContainerRef.current);
-      });
-    } catch (err) { console.error(err); }
-  };
-
-  const addElement = useCallback((element: Omit<SpatialElement, 'author' | 'timestamp' | 'authorId'>) => {
-    const yElements = yDoc.getMap('elements');
-    const fullElement: SpatialElement = {
-      ...element,
+  const addElement = useCallback((el: Omit<SpatialElement, 'author' | 'timestamp' | 'authorId'>) => {
+    const yMap = yDoc.getMap('elements');
+    const payload: SpatialElement = {
+      ...el,
       timestamp: Date.now(),
       author: userName || 'Anonymous',
       authorId: yDoc.clientID.toString()
     };
-    yElements.set(fullElement.id, fullElement as any);
+    yMap.set(payload.id, payload as any);
   }, [yDoc, userName]);
 
   const updateCursor = useCallback((x: number, y: number) => {
     const now = Date.now();
-    if (now - lastCursorUpdate.current < 25) return; 
-    lastCursorUpdate.current = now;
+    if (now - refs.lastCursor.current < 16) return; // 60fps cap
+    refs.lastCursor.current = now;
     provider?.awareness.setLocalStateField('cursor', { x, y });
   }, [provider]);
 
-  const deleteElement = useCallback((id: string) => {
-    const yElements = yDoc.getMap('elements');
-    yElements.delete(id);
-  }, [yDoc]);
+  const deleteElement = useCallback((id: string) => yDoc.getMap('elements').delete(id), [yDoc]);
 
-  const formatTime = (ms: number) => {
-    const mins = Math.floor(ms / 60000);
-    const secs = Math.floor((ms % 60000) / 1000);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  const handleFloating = async () => {
+    if (!('documentPictureInPicture' in window)) return alert("Nexus requirement: Chromium-based browser.");
+    try {
+      const pip = await (window as any).documentPictureInPicture.requestWindow({ width: 420, height: 720 });
+      setIsFloating(true);
+      [...document.styleSheets].forEach(s => {
+        try {
+          const el = document.createElement('style');
+          el.textContent = Array.from(s.cssRules).map(r => r.cssText).join('');
+          pip.document.head.appendChild(el);
+        } catch { if (s.href) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = s.href; pip.document.head.appendChild(l); } }
+      });
+      if (refs.chat.current) pip.document.body.appendChild(refs.chat.current);
+      pip.addEventListener('pagehide', () => {
+        setIsFloating(false);
+        if (refs.chat.current) document.body.appendChild(refs.chat.current);
+      });
+    } catch (e) { console.error(e); }
   };
 
   if (!userName) {
     return (
-      <div className="h-[100dvh] w-full flex items-center justify-center bg-[#050505]">
-        <div className="w-full max-w-md p-12 glass rounded-[48px] shadow-2xl animate-pop text-center">
-          <div className="w-24 h-24 bg-indigo-600 rounded-[32px] flex items-center justify-center shadow-2xl mx-auto mb-8">
-            <LucideGlobe className="w-12 h-12 text-white animate-spin-slow" />
-          </div>
-          <h1 className="text-4xl font-black text-white tracking-tighter mb-2">Spatial Hub</h1>
-          <p className="text-zinc-500 mb-10 font-medium tracking-widest uppercase text-[10px]">Unified World Mesh</p>
-          <form onSubmit={(e) => { e.preventDefault(); if(tempName.trim()){ localStorage.setItem('ephemeral-username', tempName.trim()); setUserName(tempName.trim()); } }} className="space-y-6">
-            <input autoFocus type="text" value={tempName} onChange={(e) => setTempName(e.target.value)} placeholder="Identity" className="w-full px-8 py-6 bg-white/5 border border-white/10 rounded-3xl focus:outline-none focus:ring-4 focus:ring-indigo-500/20 text-white text-xl text-center" />
-            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-6 rounded-3xl shadow-xl transition-all flex items-center justify-center gap-3 text-lg">
-              Sync to Grid <LucideArrowRight className="w-6 h-6" />
+      <div className="h-screen w-full flex items-center justify-center bg-black overflow-hidden">
+        <div className="w-full max-w-lg p-16 glass rounded-[60px] shadow-3xl animate-pop text-center border-indigo-500/20">
+          <LucideGlobe className="w-24 h-24 text-indigo-500 mx-auto mb-10 animate-spin-slow" />
+          <h1 className="text-5xl font-black text-white tracking-tighter mb-4">Spatial Hub</h1>
+          <p className="text-zinc-500 mb-12 uppercase tracking-[0.4em] text-[10px] font-bold">Global Mesh Relay</p>
+          <form onSubmit={e => { e.preventDefault(); if (tempName.trim()) { localStorage.setItem('ephemeral-username', tempName.trim()); setUserName(tempName.trim()); } }} className="space-y-8">
+            <input autoFocus value={tempName} onChange={e => setTempName(e.target.value)} placeholder="Node ID" className="w-full bg-white/5 border border-white/10 rounded-3xl p-7 text-white text-2xl text-center outline-none focus:border-indigo-500 transition-all" />
+            <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-7 rounded-3xl text-white font-black text-xl shadow-2xl flex items-center justify-center gap-4 active:scale-95 transition-all">
+              Join Nexus <LucideArrowRight className="w-6 h-6" />
             </button>
           </form>
-          <p className="mt-8 text-[9px] font-black uppercase tracking-[0.3em] text-zinc-700">One Room • One Grid • Pure P2P</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`relative h-[100dvh] w-full overflow-hidden transition-all duration-700 ${isDarkMode ? 'bg-black' : 'bg-zinc-50'}`}>
-      
-      <Draggable nodeRef={headerRef} handle=".drag-handle">
-        <div ref={headerRef} className="absolute top-6 left-8 z-[2000] flex items-center gap-3 pointer-events-auto">
-          <div className={`flex items-center gap-4 px-6 py-3 ${isDarkMode ? 'bg-zinc-950/95' : 'bg-white/95'} rounded-full shadow-2xl border border-white/10`}>
-            <div className="drag-handle cursor-grab active:cursor-grabbing p-1 hover:bg-white/10 rounded-md">
-              <LucideGripHorizontal className="w-4 h-4 text-zinc-600" />
-            </div>
-            <div className={`flex items-center gap-2 ${isConnected ? 'text-emerald-500' : 'text-rose-500'}`}>
-              {isConnected ? <LucideWifi className="w-4 h-4" /> : <LucideWifiOff className="w-4 h-4 animate-pulse" />}
-              <span className="text-[9px] font-black uppercase tracking-[0.2em]">{isConnected ? 'Global Hub Sync' : 'Reconnecting Hub...'}</span>
-            </div>
-            <div className="w-px h-4 bg-white/10" />
-            <div className="flex items-center gap-2 text-rose-500 font-black tabular-nums tracking-tighter text-sm">
-              <LucideTimer className="w-4 h-4" /> {formatTime(timeLeft)}
+    <div className={`h-screen w-screen overflow-hidden transition-colors duration-1000 ${isDarkMode ? 'bg-black' : 'bg-zinc-50'}`}>
+      <Draggable nodeRef={refs.header} handle=".drag">
+        <div ref={refs.header} className="absolute top-8 left-10 z-[3000] pointer-events-auto">
+          <div className={`flex items-center gap-5 px-8 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
+            <div className="drag cursor-grab active:cursor-grabbing p-1 text-zinc-700 hover:text-indigo-400"><LucideGripHorizontal className="w-5 h-5" /></div>
+            <div className={`flex items-center gap-3 ${isConnected ? 'text-emerald-500' : 'text-rose-500'}`}>
+              {isConnected ? <LucideWifi className="w-5 h-5" /> : <LucideWifiOff className="w-5 h-5 animate-pulse" />}
+              <span className="text-[10px] font-black uppercase tracking-[0.2em]">{isConnected ? 'Mesh Online' : 'Finding Signal...'}</span>
             </div>
           </div>
         </div>
       </Draggable>
 
-      <Draggable nodeRef={statusRef} handle=".drag-handle">
-        <div ref={statusRef} className="absolute top-6 left-1/2 -translate-x-1/2 z-[2000] pointer-events-auto">
-          <div className={`flex items-center gap-6 px-8 py-3 ${isDarkMode ? 'bg-zinc-950/95' : 'bg-white/95'} rounded-full shadow-2xl border border-white/10 group`}>
-            <div className="drag-handle cursor-grab active:cursor-grabbing p-1 text-zinc-600 hover:text-indigo-400"><LucideGripHorizontal className="w-4 h-4" /></div>
+      <Draggable nodeRef={refs.status} handle=".drag">
+        <div ref={refs.status} className="absolute top-8 left-1/2 -translate-x-1/2 z-[3000] pointer-events-auto">
+          <div className={`flex items-center gap-6 px-10 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
+            <div className="drag cursor-grab active:cursor-grabbing text-zinc-800"><LucideGripHorizontal className="w-4 h-4" /></div>
             <div className="flex items-center gap-3 text-indigo-400">
-               <LucideRadio className="w-4 h-4 animate-pulse" />
-               <span className="text-[9px] font-black uppercase tracking-[0.3em]">Open World Nexus</span>
+              <LucideRadio className="w-5 h-5 animate-pulse" />
+              <span className="text-[10px] font-black uppercase tracking-[0.3em]">Global Grid</span>
             </div>
-            <div className="w-px h-4 bg-white/10" />
-            <div className="flex items-center gap-2">
-               <LucideUsers className="w-4 h-4 text-zinc-600" />
-               <span className="text-[10px] font-bold text-white">{onlineUsers.length} Nodes in Grid</span>
-            </div>
-          </div>
-        </div>
-      </Draggable>
-
-      <Draggable nodeRef={systemClusterRef} handle=".drag-handle">
-        <div ref={systemClusterRef} className="absolute top-6 right-8 z-[2000] flex items-center gap-3 pointer-events-auto">
-          <div className={`flex items-center gap-4 px-6 py-3 ${isDarkMode ? 'bg-zinc-950/95' : 'bg-white/95'} rounded-full shadow-2xl border border-white/10`}>
-            <button onClick={() => setIsMiniMode(!isMiniMode)} title="Stealth Mode" className={`p-2 rounded-xl transition-all ${isMiniMode ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-indigo-400'}`}><LucideMinimize2 className="w-5 h-5" /></button>
-            <button onClick={handleFloatingToggle} title="Pop-out Signal Hub" className={`p-2 rounded-xl transition-all ${isFloating ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:text-indigo-400'}`}><LucideAppWindow className="w-5 h-5" /></button>
-            <button onClick={toggleOverlay} className="p-2 text-zinc-400 hover:text-white"><LucideMaximize2 className="w-5 h-5" /></button>
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 transition-all">
-              {isDarkMode ? <LucideSun className="w-5 h-5 text-amber-500" /> : <LucideMoon className="w-5 h-5 text-indigo-500" />}
-            </button>
-            <div className="drag-handle cursor-grab active:cursor-grabbing p-1 hover:bg-white/10 rounded-md">
-              <LucideGripHorizontal className="w-4 h-4 text-zinc-600" />
+            <div className="w-px h-5 bg-white/10" />
+            <div className="flex items-center gap-3 text-white">
+              <LucideUsers className="w-4 h-4 text-zinc-600" />
+              <span className="text-xs font-black">{onlineUsers.length} Nodes</span>
             </div>
           </div>
         </div>
       </Draggable>
 
-      {!isMiniMode && <Canvas elements={elements} cursors={cursors} onAddElement={addElement} onUpdateElement={() => {}} onCursorMove={updateCursor} onDeleteElement={deleteElement} yDoc={yDoc} isDarkMode={isDarkMode} />}
-      {isMiniMode && <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-10"><LucideZap className="w-64 h-64 text-indigo-500 mb-8 animate-pulse" /><span className="text-[14px] font-black uppercase tracking-[1.5em]">Global Uplink Active</span></div>}
+      <Draggable nodeRef={refs.cluster} handle=".drag">
+        <div ref={refs.cluster} className="absolute top-8 right-10 z-[3000] pointer-events-auto">
+          <div className={`flex items-center gap-4 px-8 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
+            <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2.5 rounded-xl transition-all ${isMiniMode ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-indigo-400'}`}><LucideMinimize2 className="w-6 h-6" /></button>
+            <button onClick={handleFloating} className="p-2.5 text-zinc-500 hover:text-white transition-all"><LucideAppWindow className="w-6 h-6" /></button>
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2.5 transition-all">{isDarkMode ? <LucideSun className="w-6 h-6 text-amber-500" /> : <LucideMoon className="w-6 h-6 text-indigo-500" />}</button>
+            <div className="drag cursor-grab active:cursor-grabbing text-zinc-800"><LucideGripHorizontal className="w-4 h-4" /></div>
+          </div>
+        </div>
+      </Draggable>
 
-      <div ref={chatContainerRef} className={isFloating ? "h-full w-full" : ""}>
-        <ChatOverlay elements={elements} onAddElement={addElement} onlineUsers={onlineUsers} myId={yDoc.clientID.toString()} isDarkMode={isDarkMode} isFloating={isFloating} isMiniMode={isMiniMode} />
+      {!isMiniMode && (
+        <Canvas 
+          elements={elements} 
+          cursors={cursors} 
+          onAddElement={addElement} 
+          onUpdateElement={() => {}} 
+          onCursorMove={updateCursor} 
+          onDeleteElement={deleteElement} 
+          yDoc={yDoc} 
+          isDarkMode={isDarkMode} 
+        />
+      )}
+      
+      {isMiniMode && (
+        <div className="absolute inset-0 flex items-center justify-center opacity-5 pointer-events-none">
+          <LucideZap className="w-96 h-96 text-indigo-500 animate-pulse" />
+        </div>
+      )}
+
+      <div ref={refs.chat} className={isFloating ? "h-full w-full" : ""}>
+        <ChatOverlay 
+          elements={elements} 
+          onAddElement={addElement} 
+          onlineUsers={onlineUsers} 
+          myId={yDoc.clientID.toString()} 
+          isDarkMode={isDarkMode} 
+          isFloating={isFloating} 
+          isMiniMode={isMiniMode} 
+        />
       </div>
     </div>
   );

@@ -1,19 +1,23 @@
 import { RoomInfo } from '../types';
 
-// The Single Source of Truth for the Open World Mesh
-const GLOBAL_WORLD_ID = 'spatial-hub-central-nexus-core-v2';
+/**
+ * GLOBAL_WORLD_ID: The immutable coordinate for the spatial nexus.
+ * All nodes globally must target this exact string to achieve mesh convergence.
+ */
+const GLOBAL_WORLD_ID = 'spatial-hub-v3-universal-mesh-relay-2025-core';
 
-export function getRoomInfoFromHash(): RoomInfo {
-  // We ignore the URL hash entirely to ensure NO sub-groups can be created.
-  // Everyone is forced into the same global grid.
-  return { roomId: GLOBAL_WORLD_ID, key: '' };
-}
+export const getRoomInfoFromHash = (): RoomInfo => ({
+  roomId: GLOBAL_WORLD_ID,
+  key: ''
+});
 
-export function generateRoomInfo(): RoomInfo {
-  return { roomId: GLOBAL_WORLD_ID, key: '' };
-}
+export const generateRoomInfo = (): RoomInfo => ({
+  roomId: GLOBAL_WORLD_ID,
+  key: ''
+});
 
-export function updateHash(info: RoomInfo) {
-  // We keep the hash empty to maintain the "Open World" aesthetic.
-  window.location.hash = '';
-}
+export const updateHash = (info: RoomInfo): void => {
+  if (window.location.hash !== '') {
+    window.history.replaceState(null, '', ' ');
+  }
+};
