@@ -1,32 +1,19 @@
 import { RoomInfo } from '../types';
 
-const GLOBAL_ROOM_ID = 'nexus-global-grid';
+// The Single Source of Truth for the Open World Mesh
+const GLOBAL_WORLD_ID = 'spatial-hub-central-nexus-core-v2';
 
-export function getRoomInfoFromHash(): RoomInfo | null {
-  const hash = window.location.hash.substring(1);
-  if (!hash) return { roomId: GLOBAL_ROOM_ID, key: '' };
-
-  const pairs = hash.split('&');
-  let roomId = GLOBAL_ROOM_ID;
-
-  for (const pair of pairs) {
-    const [k, v] = pair.split('=');
-    if (k === 'room') roomId = v;
-  }
-
-  return { roomId, key: '' };
+export function getRoomInfoFromHash(): RoomInfo {
+  // We ignore the URL hash entirely to ensure NO sub-groups can be created.
+  // Everyone is forced into the same global grid.
+  return { roomId: GLOBAL_WORLD_ID, key: '' };
 }
 
 export function generateRoomInfo(): RoomInfo {
-  // We keep the option for custom room names in URL, but default is standard
-  return { roomId: GLOBAL_ROOM_ID, key: '' };
+  return { roomId: GLOBAL_WORLD_ID, key: '' };
 }
 
 export function updateHash(info: RoomInfo) {
-  // Only update if it's not the default room to keep URL clean
-  if (info.roomId === GLOBAL_ROOM_ID) {
-    window.location.hash = '';
-  } else {
-    window.location.hash = `room=${info.roomId}`;
-  }
+  // We keep the hash empty to maintain the "Open World" aesthetic.
+  window.location.hash = '';
 }

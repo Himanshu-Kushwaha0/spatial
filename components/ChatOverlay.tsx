@@ -45,11 +45,14 @@ const ChatOverlay: React.FC<ChatOverlayProps> = ({ elements, onAddElement, onlin
     if (!message.trim()) return;
 
     const id = (whisperTarget ? 'whisper-' : 'pop-') + Math.random().toString(36).substring(7);
+    
+    // GUARANTEED EPHEMERAL: Every chat message disappears in 5 seconds for everyone
     onAddElement({
-      id, type: 'text',
+      id, 
+      type: 'text',
       x: 300 + Math.random() * (window.innerWidth - 700),
       y: 300 + Math.random() * (window.innerHeight - 600),
-      content: whisperTarget ? `[MESH-TUNNEL] ${message}` : message,
+      content: whisperTarget ? `[TUNNEL] ${message}` : message,
       isEphemeral: true,
       recipientId: whisperTarget?.clientId,
       color: whisperTarget ? '#fbbf24' : undefined 
@@ -126,18 +129,18 @@ const ChatOverlay: React.FC<ChatOverlayProps> = ({ elements, onAddElement, onlin
                     </button>
                     <div className={`px-6 py-4 rounded-[28px] text-sm break-words shadow-2xl leading-relaxed ${item.isPrivate ? 'bg-amber-500/10 border border-amber-500/20 text-amber-200' : 'bg-indigo-600 text-white'}`}>{item.text}</div>
                   </div>
-                  <span className="text-[8px] mt-2 font-black text-zinc-800 uppercase tracking-widest px-2 group-hover:text-zinc-600 transition-colors">{item.author} {item.isPrivate && '• MESH-TUNNEL'}</span>
+                  <span className="text-[8px] mt-2 font-black text-zinc-800 uppercase tracking-widest px-2 group-hover:text-zinc-600 transition-colors">{item.author} {item.isPrivate && '• TUNNEL'}</span>
                 </div>
               )) : (
                 <div className="h-full flex flex-col items-center justify-center text-zinc-900 space-y-4 opacity-40">
                   <LucideMessageSquare className="w-16 h-16" />
-                  <p className="text-[10px] font-black uppercase tracking-[0.4em]">Listening for signals...</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.4em]">Syncing World Signals...</p>
                 </div>
               )
             ) : onlineUsers.map((u) => (
               <button key={u.clientId} onClick={() => { setWhisperTarget(u); setActiveTab('chat'); }} className={`w-full flex items-center justify-between p-5 rounded-[28px] border transition-all ${u.clientId === myId ? 'bg-white/5 border-transparent opacity-40 grayscale cursor-default' : 'bg-white/2 border-white/5 hover:border-indigo-500/40 hover:bg-white/5 hover:scale-[1.02]'}`}>
-                <div className="flex items-center gap-4"><div className="w-10 h-10 rounded-full border-2 border-black shadow-lg" style={{ background: u.color }} /><span className="text-sm font-black text-zinc-300">{u.name} {u.clientId === myId && '(Host)'}</span></div>
-                {u.clientId !== myId && <span className="text-[8px] font-black text-indigo-400 tracking-widest uppercase">Signal</span>}
+                <div className="flex items-center gap-4"><div className="w-10 h-10 rounded-full border-2 border-black shadow-lg" style={{ background: u.color }} /><span className="text-sm font-black text-zinc-300">{u.name} {u.clientId === myId && '(You)'}</span></div>
+                {u.clientId !== myId && <span className="text-[8px] font-black text-indigo-400 tracking-widest uppercase">Direct Signal</span>}
               </button>
             ))}
           </div>

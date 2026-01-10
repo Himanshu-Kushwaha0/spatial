@@ -20,7 +20,6 @@ import {
   LucideSendHorizontal,
   LucidePlus,
   LucideTrash,
-  LucideSmile,
   LucideCopy,
   LucideCheck,
   LucideMessageSquare
@@ -439,13 +438,15 @@ const DraggableElement: React.FC<{ element: SpatialElement, onDelete: (id: strin
   const [resizing, setResizing] = useState(false);
   const [isFading, setIsFading] = useState(false);
 
+  // Sync visual fade-out with 5s TTL
   useEffect(() => {
     if (element.isEphemeral) {
-      // Trigger visual fade-out slightly before deletion
-      const timer = setTimeout(() => setIsFading(true), 4200);
+      const remaining = Math.max(0, 5000 - (Date.now() - element.timestamp));
+      const fadeStartTime = Math.max(0, remaining - 1200); // Start fading 1.2s before deletion
+      const timer = setTimeout(() => setIsFading(true), fadeStartTime);
       return () => clearTimeout(timer);
     }
-  }, [element.isEphemeral]);
+  }, [element.isEphemeral, element.timestamp]);
 
   const handleResize = (e: React.MouseEvent) => {
     e.stopPropagation(); e.preventDefault();
@@ -462,9 +463,7 @@ const DraggableElement: React.FC<{ element: SpatialElement, onDelete: (id: strin
       await navigator.clipboard.writeText(element.content);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy signal:', err);
-    }
+    } catch (err) { console.error('Failed to copy signal:', err); }
   };
 
   const textStyles = {
@@ -486,7 +485,7 @@ const DraggableElement: React.FC<{ element: SpatialElement, onDelete: (id: strin
        const item = yElements.get(element.id) as any;
        if (item) yElements.set(element.id, { ...item, x: data.x, y: data.y });
     }} handle=".drag-handle">
-      <div ref={nodeRef} className={`absolute z-20 group transition-all duration-[5000ms] ease-out ${isFading ? 'opacity-0 scale-90 translate-y-[-20px]' : 'opacity-100 scale-100'}`}>
+      <div ref={nodeRef} className={`absolute z-20 group transition-all duration-[1200ms] ease-in-out ${isFading ? 'opacity-0 scale-75 blur-lg translate-y-[-40px]' : 'opacity-100 scale-100'}`}>
         <div className={`relative p-8 rounded-[48px] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8)] border-2 border-white/5 transition-all ${containerBgClass}`}>
           <div className="absolute -top-12 left-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all bg-black/98 p-3 rounded-2xl shadow-3xl z-50 border border-white/10 scale-90 group-hover:scale-100">
              <div className="drag-handle cursor-grab active:cursor-grabbing p-2 text-zinc-500 hover:text-indigo-400"><LucideGripVertical className="w-5 h-5" /></div>
@@ -503,7 +502,7 @@ const DraggableElement: React.FC<{ element: SpatialElement, onDelete: (id: strin
             <p className="text-4xl font-black break-words leading-tight" style={textStyles}>{element.content}</p>
             {element.isEphemeral && (
                <div className="mt-4 text-[9px] font-black uppercase tracking-[0.3em] text-zinc-500 opacity-60 flex items-center gap-2">
-                 <LucideMessageSquare className="w-3 h-3" /> Pop Node • {element.author}
+                 <LucideMessageSquare className="w-3 h-3" /> Anywhere Signal • {element.author}
                </div>
             )}
           </div>}
