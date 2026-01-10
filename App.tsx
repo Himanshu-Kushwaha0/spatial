@@ -64,7 +64,7 @@ const App: React.FC = () => {
   }, [yDoc]);
 
   useEffect(() => {
-    const interval = setInterval(ephemeralGc, 500);
+    const interval = setInterval(ephemeralGc, 1000);
     return () => clearInterval(interval);
   }, [ephemeralGc]);
 
@@ -74,19 +74,17 @@ const App: React.FC = () => {
     const info = getRoomInfoFromHash();
     updateHash(info);
 
-    // GOOGLE STUN INFRASTRUCTURE + MULTI-SIGNALLING MESH
+    // EXPANDED SIGNALING CLUSTER: Ensures many-to-many connectivity across different regions
     const webrtcProvider = new WebrtcProvider(
       info.roomId,
       yDoc,
       {
         signaling: [
           'wss://y-webrtc-signaling-us.herokuapp.com',
-          'wss://y-webrtc-signaling-eu.herokuapp.com',
           'wss://signaling.yjs.dev',
           'wss://y-webrtc-ck.herokuapp.com',
-          'wss://y-webrtc.fly.dev',
-          'wss://y-webrtc-us.fly.dev',
-          'wss://y-webrtc-signaling.onrender.com'
+          'wss://y-webrtc-signaling-eu.herokuapp.com',
+          'wss://y-webrtc.fly.dev'
         ],
         peerOpts: {
           config: {
@@ -97,7 +95,7 @@ const App: React.FC = () => {
               { urls: 'stun:stun3.l.google.com:19302' },
               { urls: 'stun:stun4.l.google.com:19302' }
             ],
-            iceCandidatePoolSize: 12
+            iceCandidatePoolSize: 20 // Maximize candidate pool for complex networks
           }
         }
       }
@@ -137,7 +135,7 @@ const App: React.FC = () => {
 
     const peerCheck = setInterval(() => {
       setPeerCount(webrtcProvider.room?.webrtcConns.size || 0);
-    }, 1500);
+    }, 2000);
 
     webrtcProvider.awareness.on('change', () => {
       const states = webrtcProvider.awareness.getStates();
@@ -165,31 +163,36 @@ const App: React.FC = () => {
   }, [yDoc, userName]);
 
   const addElement = useCallback((el: Omit<SpatialElement, 'author' | 'timestamp' | 'authorId'>) => {
-    const yMap = yDoc.getMap('elements');
-    const payload: SpatialElement = {
-      ...el,
-      timestamp: Date.now(),
-      author: userName || 'Anonymous',
-      authorId: yDoc.clientID.toString()
-    };
-    yMap.set(payload.id, payload as any);
+    // TRANSACTIONAL SYNC: Ensures heavy binary payloads (images/files) aren't fragmented
+    yDoc.transact(() => {
+      const yMap = yDoc.getMap('elements');
+      const payload: SpatialElement = {
+        ...el,
+        timestamp: Date.now(),
+        author: userName || 'Anonymous',
+        authorId: yDoc.clientID.toString()
+      };
+      yMap.set(payload.id, payload as any);
+    });
   }, [yDoc, userName]);
 
   const addChatMessage = useCallback((text: string, whisperTargetId?: string) => {
-    const yChat = yDoc.getArray('chatHistory');
-    yChat.push([{
-      id: Math.random().toString(36).substring(7),
-      author: userName || 'Anonymous',
-      authorId: yDoc.clientID.toString(),
-      text,
-      recipientId: whisperTargetId,
-      timestamp: Date.now()
-    }]);
+    yDoc.transact(() => {
+      const yChat = yDoc.getArray('chatHistory');
+      yChat.push([{
+        id: Math.random().toString(36).substring(7),
+        author: userName || 'Anonymous',
+        authorId: yDoc.clientID.toString(),
+        text,
+        recipientId: whisperTargetId,
+        timestamp: Date.now()
+      }]);
+    });
   }, [yDoc, userName]);
 
   const updateCursor = useCallback((x: number, y: number) => {
     const now = Date.now();
-    if (now - refs.lastCursor.current < 16) return; 
+    if (now - refs.lastCursor.current < 20) return; 
     refs.lastCursor.current = now;
     provider?.awareness.setLocalStateField('cursor', { x, y });
   }, [provider]);
@@ -197,23 +200,37 @@ const App: React.FC = () => {
   const deleteElement = useCallback((id: string) => yDoc.getMap('elements').delete(id), [yDoc]);
 
   const handleFloating = async () => {
-    if (!('documentPictureInPicture' in window)) return alert("Floating PiP requires a Chrome-based browser.");
+    if (!('documentPictureInPicture' in window)) return alert("Nexus PiP requires Chrome or Edge.");
     try {
       const pip = await (window as any).documentPictureInPicture.requestWindow({ width: 420, height: 720 });
       setIsFloating(true);
+      
+      // Full style clone to Detached Window
       [...document.styleSheets].forEach(s => {
         try {
           const el = document.createElement('style');
           el.textContent = Array.from(s.cssRules).map(r => r.cssText).join('');
           pip.document.head.appendChild(el);
-        } catch { if (s.href) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = s.href; pip.document.head.appendChild(l); } }
+        } catch { 
+          if (s.href) { 
+            const l = document.createElement('link'); 
+            l.rel = 'stylesheet'; 
+            l.href = s.href; 
+            pip.document.head.appendChild(l); 
+          } 
+        }
       });
-      if (refs.chat.current) pip.document.body.appendChild(refs.chat.current);
+
+      // Move chat component to PiP
+      if (refs.chat.current) {
+        pip.document.body.appendChild(refs.chat.current);
+      }
+
       pip.addEventListener('pagehide', () => {
         setIsFloating(false);
         if (refs.chat.current) document.body.appendChild(refs.chat.current);
       });
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("PiP Handshake Failed:", e); }
   };
 
   if (!userName) {
@@ -222,11 +239,11 @@ const App: React.FC = () => {
         <div className="w-full max-w-lg p-10 md:p-16 glass rounded-[40px] md:rounded-[60px] shadow-3xl animate-pop text-center border-indigo-500/20">
           <LucideGlobe className="w-16 h-16 md:w-24 md:h-24 text-indigo-500 mx-auto mb-6 md:mb-10 animate-spin-slow" />
           <h1 className="text-3xl md:text-5xl font-black text-white tracking-tighter mb-4">Spatial Hub</h1>
-          <p className="text-zinc-500 mb-8 md:mb-12 uppercase tracking-[0.4em] text-[8px] md:text-[10px] font-bold">Global Mesh Relay</p>
+          <p className="text-zinc-500 mb-8 md:mb-12 uppercase tracking-[0.4em] text-[8px] md:text-[10px] font-bold">Mesh Network V3</p>
           <form onSubmit={e => { e.preventDefault(); if (tempName.trim()) { localStorage.setItem('ephemeral-username', tempName.trim()); setUserName(tempName.trim()); } }} className="space-y-6 md:space-y-8">
-            <input autoFocus value={tempName} onChange={e => setTempName(e.target.value)} placeholder="Node Identity" className="w-full bg-white/5 border border-white/10 rounded-2xl md:rounded-3xl p-5 md:p-7 text-white text-xl md:text-2xl text-center outline-none focus:border-indigo-500 transition-all" />
+            <input autoFocus value={tempName} onChange={e => setTempName(e.target.value)} placeholder="Identity Identifier" className="w-full bg-white/5 border border-white/10 rounded-2xl md:rounded-3xl p-5 md:p-7 text-white text-xl md:text-2xl text-center outline-none focus:border-indigo-500 transition-all" />
             <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-5 md:py-7 rounded-2xl md:rounded-3xl text-white font-black text-lg md:text-xl shadow-2xl flex items-center justify-center gap-4 active:scale-95 transition-all">
-              Join Mesh <LucideArrowRight className="w-6 h-6" />
+              Join Swarm <LucideArrowRight className="w-6 h-6" />
             </button>
           </form>
         </div>
@@ -243,7 +260,7 @@ const App: React.FC = () => {
           <div className={`pointer-events-auto flex items-center justify-between px-6 py-3 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-xl border border-white/10 backdrop-blur-md`}>
             <div className="flex items-center gap-3">
               {actuallyConnected ? <LucideWifi className="w-4 h-4 text-emerald-500" /> : <LucideWifiOff className="w-4 h-4 text-rose-500 animate-pulse" />}
-              <span className="text-[9px] font-black uppercase tracking-widest text-white/80">{onlineUsers.length} Nodes Tuned</span>
+              <span className="text-[9px] font-black uppercase tracking-widest text-white/80">{onlineUsers.length} Nodes</span>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 transition-all">{isDarkMode ? <LucideSun className="w-5 h-5 text-amber-500" /> : <LucideMoon className="w-5 h-5 text-indigo-500" />}</button>
@@ -259,7 +276,7 @@ const App: React.FC = () => {
                 <div className="drag cursor-grab active:cursor-grabbing p-1 text-zinc-700 hover:text-indigo-400"><LucideGripHorizontal className="w-5 h-5" /></div>
                 <div className={`flex items-center gap-3 ${actuallyConnected ? 'text-emerald-500' : 'text-rose-500'}`}>
                   {actuallyConnected ? <LucideWifi className="w-5 h-5" /> : <LucideWifiOff className="w-5 h-5 animate-pulse" />}
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em]">{actuallyConnected ? 'Internet P2P Mesh' : isConnected ? 'Scanning Signaling...' : 'Mesh Offline'}</span>
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em]">{actuallyConnected ? 'Mesh Synchronized' : isConnected ? 'Tuning Mesh...' : 'Mesh Unavailable'}</span>
                 </div>
               </div>
             </div>
@@ -271,12 +288,12 @@ const App: React.FC = () => {
                 <div className="drag cursor-grab active:cursor-grabbing text-zinc-800"><LucideGripHorizontal className="w-4 h-4" /></div>
                 <div className="flex items-center gap-3 text-indigo-400">
                   <LucideRadio className="w-5 h-5 animate-pulse" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.3em]">Nexus Core</span>
+                  <span className="text-[10px] font-black uppercase tracking-[0.3em]">Mesh OS</span>
                 </div>
                 <div className="w-px h-5 bg-white/10" />
                 <div className="flex items-center gap-3 text-white">
                   <LucideUsers className="w-4 h-4 text-zinc-600" />
-                  <span className="text-xs font-black">{onlineUsers.length} Active Peers</span>
+                  <span className="text-xs font-black">{onlineUsers.length} Connected</span>
                 </div>
               </div>
             </div>
@@ -285,8 +302,8 @@ const App: React.FC = () => {
           <Draggable nodeRef={refs.cluster} handle=".drag">
             <div ref={refs.cluster} className="absolute top-8 right-10 z-[3000] pointer-events-auto">
               <div className={`flex items-center gap-4 px-8 py-4 ${isDarkMode ? 'bg-zinc-950/90' : 'bg-white/90'} rounded-full shadow-2xl border border-white/10`}>
-                <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2.5 rounded-xl transition-all ${isMiniMode ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-indigo-400'}`}><LucideMinimize2 className="w-6 h-6" /></button>
-                <button onClick={handleFloating} className="p-2.5 text-zinc-500 hover:text-white transition-all"><LucideAppWindow className="w-6 h-6" /></button>
+                <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2.5 rounded-xl transition-all ${isMiniMode ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-indigo-400'}`} title="Toggle Minimal Mode"><LucideMinimize2 className="w-6 h-6" /></button>
+                <button onClick={handleFloating} className="p-2.5 text-zinc-500 hover:text-white transition-all" title="Detach Interface to PiP"><LucideAppWindow className="w-6 h-6" /></button>
                 <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2.5 transition-all">{isDarkMode ? <LucideSun className="w-6 h-6 text-amber-500" /> : <LucideMoon className="w-6 h-6 text-indigo-500" />}</button>
                 <div className="drag cursor-grab active:cursor-grabbing text-zinc-800"><LucideGripHorizontal className="w-4 h-4" /></div>
               </div>

@@ -9,7 +9,6 @@ import {
   LucideType, 
   LucideX,
   LucideFileText,
-  LucideDownload,
   LucideZap,
   LucideSparkles,
   LucideGhost,
@@ -18,12 +17,7 @@ import {
   LucideGripVertical,
   LucideMaximize,
   LucideSendHorizontal,
-  LucidePlus,
-  LucideTrash,
-  LucideCopy,
-  LucideCheck,
-  LucideMessageSquare,
-  LucideSmilePlus
+  LucideTrash
 } from 'lucide-react';
 import { getStroke } from 'perfect-freehand';
 import React, { useRef, useState, useCallback, useEffect } from 'react';
@@ -103,7 +97,15 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         const reader = new FileReader();
-        reader.onloadend = () => onAddElement({ id: 'voice-' + Math.random().toString(36).substring(7), type: 'voice', x, y, content: reader.result as string });
+        reader.onloadend = () => {
+          onAddElement({ 
+            id: 'voice-' + Math.random().toString(36).substring(7), 
+            type: 'voice', 
+            x, 
+            y, 
+            content: reader.result as string 
+          });
+        };
         reader.readAsDataURL(audioBlob);
         stream.getTracks().forEach(t => t.stop());
         if(audioContextRef.current) audioContextRef.current.close();
@@ -113,7 +115,7 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
       mediaRecorder.start();
       setIsRecording(true);
       drawWaveform();
-    } catch (err) { alert("Mic access required for Voice Signals."); }
+    } catch (err) { alert("Microphone access is required for Voice P2P."); }
   };
 
   const drawWaveform = () => {
@@ -159,7 +161,10 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
   const handlePointerDown = (e: React.PointerEvent) => {
     const target = e.target as HTMLElement;
     if (target.closest('.pointer-events-auto')) return;
-    if (activeMode === 'text') { setTextInputPos({ x: e.clientX, y: e.clientY }); return; }
+    if (activeMode === 'text') { 
+      setTextInputPos({ x: e.clientX, y: e.clientY }); 
+      return; 
+    }
     if (activeMode === 'drawing') {
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       setCurrentPath([[e.clientX, e.clientY, e.pressure || 0.5]]);
@@ -214,11 +219,13 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
         const file = ev.target.files[0];
         if (file && menuPos) {
           const reader = new FileReader();
-          reader.onloadend = () => onAddElement({ 
-            id: 'file-' + Math.random().toString(36).substring(7), 
-            type: 'file', x: menuPos.x, y: menuPos.y, content: reader.result as string, 
-            metadata: { fileName: file.name, fileSize: file.size, fileType: file.type } 
-          });
+          reader.onloadend = () => {
+            onAddElement({ 
+              id: 'file-' + Math.random().toString(36).substring(7), 
+              type: 'file', x: menuPos.x, y: menuPos.y, content: reader.result as string, 
+              metadata: { fileName: file.name, fileSize: file.size, fileType: file.type } 
+            });
+          };
           reader.readAsDataURL(file);
         }
       };
@@ -230,18 +237,22 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
         const file = ev.target.files[0];
         if (file && menuPos) {
           const reader = new FileReader();
-          reader.onloadend = () => onAddElement({ 
-            id: 'img-' + Math.random().toString(36).substring(7), 
-            type: 'image', x: menuPos.x, y: menuPos.y, content: reader.result as string, 
-            metadata: { fileName: file.name } 
-          });
+          reader.onloadend = () => {
+            onAddElement({ 
+              id: 'img-' + Math.random().toString(36).substring(7), 
+              type: 'image', x: menuPos.x, y: menuPos.y, content: reader.result as string, 
+              metadata: { fileName: file.name } 
+            });
+          };
           reader.readAsDataURL(file);
         }
       };
       input.click();
     } else if (type === 'voice') {
       if (menuPos) startRecording(menuPos.x, menuPos.y);
-    } else { setActiveMode(type); }
+    } else { 
+      setActiveMode(type); 
+    }
     if (type !== 'poll' && type !== 'emoji') setMenuPos(null);
   };
 
@@ -282,7 +293,7 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
           <div className="bg-zinc-950 p-6 md:p-10 rounded-[32px] md:rounded-[48px] border-2 border-white/10 w-full max-w-2xl space-y-6 md:space-y-8 animate-pop shadow-3xl overflow-y-auto max-h-[90vh]">
              <div className="flex items-center gap-4 md:gap-6 text-violet-400">
                <LucidePieChart className="w-8 h-8 md:w-12 md:h-12" />
-               <h2 className="text-2xl md:text-4xl font-black tracking-tighter text-white">Nexus Poll</h2>
+               <h2 className="text-2xl md:text-4xl font-black tracking-tighter text-white">Mesh Poll</h2>
              </div>
              <div className="space-y-4 md:space-y-6">
                <input autoFocus value={pollDraft.question} onChange={e => setPollDraft({...pollDraft, question: e.target.value})} className="w-full bg-zinc-900 border border-white/10 rounded-2xl md:rounded-[28px] p-4 md:p-6 text-lg md:text-2xl font-bold outline-none text-white" placeholder="Broadcast Question..." />
@@ -309,8 +320,8 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
         </div>
       )}
 
-      {/* MOBILE SAFE-ZONE RE-INDEXING: Mods Bubble and Chat Trigger separation */}
-      <Draggable nodeRef={modsBubbleRef} disabled={isMobile}><div ref={modsBubbleRef} className={`absolute ${isMobile ? 'bottom-8 left-6' : 'bottom-10 left-10'} z-[3000] pointer-events-auto`}>
+      {/* MODS BUBBLE: Safety spacing for mobile gesture zones */}
+      <Draggable nodeRef={modsBubbleRef} disabled={isMobile}><div ref={modsBubbleRef} className={`absolute ${isMobile ? 'bottom-28 left-6' : 'bottom-10 left-10'} z-[3000] pointer-events-auto`}>
         <button onClick={() => setIsModsOpen(!isModsOpen)} className={`w-14 h-14 md:w-16 md:h-16 rounded-2xl md:rounded-[24px] flex items-center justify-center shadow-2xl border-2 border-white/20 transition-all ${isDarkMode ? 'bg-zinc-950 text-white' : 'bg-white text-zinc-900'}`}>
           <LucideZap className={`w-6 h-6 md:w-7 md:h-7 ${isRainbowMode || isGhostMode || isNeonMode ? 'text-amber-400 animate-pulse' : 'text-indigo-500'}`} />
         </button>
@@ -319,7 +330,7 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
           <ModToggle active={isGhostMode} onClick={() => setIsGhostMode(!isGhostMode)} icon={<LucideGhost className="w-4 h-4"/>} label="Ghost" isMobile={isMobile} />
           <ModToggle active={isNeonMode} onClick={() => setIsNeonMode(!isNeonMode)} icon={<LucideSun className="w-4 h-4"/>} label="Neon" isMobile={isMobile} />
           
-          <div className="flex flex-wrap gap-1.5 md:gap-2 pt-3 md:pt-4 border-t border-white/10">
+          <div className="flex flex-wrap gap-2 pt-3 border-t border-white/10">
             {['🔥','🚀','❤️','✨','💎','🌈','🛸','⚡️','💀','👽','👋'].map(em => (
               <button 
                 key={em} 
@@ -332,7 +343,7 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
                   }); 
                   setIsModsOpen(false); 
                 }} 
-                className="w-10 h-10 md:w-11 md:h-11 rounded-xl md:rounded-2xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-xl md:text-2xl active:scale-90 transition-all"
+                className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-xl active:scale-90 transition-all"
               >
                 {em}
               </button>
@@ -342,7 +353,7 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
       </div></Draggable>
 
       {activeMode !== 'none' && !textInputPos && activeMode !== 'poll' && (
-        <div className={`fixed ${isMobile ? 'bottom-28' : 'bottom-10'} left-1/2 -translate-x-1/2 flex items-center gap-4 pointer-events-auto z-[1000] animate-pop w-full max-w-[90vw] justify-center`}>
+        <div className={`fixed ${isMobile ? 'bottom-44' : 'bottom-10'} left-1/2 -translate-x-1/2 flex items-center gap-4 pointer-events-auto z-[1000] animate-pop w-full max-w-[90vw] justify-center`}>
           <div className={`${isDarkMode ? 'bg-zinc-950 text-white border-indigo-500/30' : 'bg-white text-zinc-900 border-indigo-200'} rounded-full px-5 md:px-8 py-3 md:py-4 flex items-center gap-4 md:gap-6 shadow-3xl border backdrop-blur-md`}>
              {activeMode === 'drawing' && (
                <div className="flex items-center gap-3 md:gap-4 overflow-x-auto max-w-[150px] md:max-w-none no-scrollbar">
@@ -350,13 +361,12 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
                  <input type="range" min="4" max="100" value={brushSize} onChange={e => setBrushSize(+e.target.value)} className="w-16 md:w-24 accent-indigo-500" />
                </div>
              )}
-             <span className="text-[8px] md:text-[10px] font-black uppercase tracking-[0.3em] text-indigo-400 whitespace-nowrap">{activeMode} Active</span>
-             <button onClick={() => { setActiveMode('none'); setCurrentPath([]); }} className="p-2 md:p-2.5 bg-rose-500 rounded-full text-white"><LucideX className="w-4 h-4"/></button>
+             <span className="text-[8px] md:text-[10px] font-black uppercase tracking-[0.3em] text-indigo-400 whitespace-nowrap">{activeMode} Uplink</span>
+             <button onClick={() => { setActiveMode('none'); setCurrentPath([]); }} className="p-2 md:p-2.5 bg-rose-500 rounded-full text-white hover:bg-rose-600 transition-colors"><LucideX className="w-4 h-4"/></button>
           </div>
         </div>
       )}
 
-      {/* CONTEXT MENU: Responsive Positioning Clamping */}
       {menuPos && activeMode === 'none' && (
         <div className="absolute z-[4000] p-2 md:p-4 bg-zinc-950/98 rounded-[24px] md:rounded-[40px] shadow-2xl flex flex-wrap gap-1 pointer-events-auto max-w-[280px] md:max-w-[400px] animate-pop border border-white/20" style={{ top: Math.min(menuPos.y, window.innerHeight - (isMobile ? 240 : 340)), left: Math.min(menuPos.x, window.innerWidth - (isMobile ? 280 : 400)) }}>
           <MenuButton icon={<LucideType className="w-5 h-5 md:w-6 md:h-6" />} label="Signal" onClick={() => handleAction('text')} isMobile={isMobile} />
@@ -365,22 +375,22 @@ const Canvas: React.FC<CanvasProps> = ({ elements, cursors, onAddElement, onUpda
           <MenuButton icon={<LucideEraser className="w-5 h-5 md:w-6 md:h-6 text-rose-500" />} label="Eraser" onClick={() => handleAction('eraser')} isMobile={isMobile} />
           <MenuButton icon={<LucideMic className="w-5 h-5 md:w-6 md:h-6 text-amber-400" />} label="Voice" onClick={() => handleAction('voice')} isMobile={isMobile} />
           <MenuButton icon={<LucideImage className="w-5 h-5 md:w-6 md:h-6 text-sky-400" />} label="Image" onClick={() => handleAction('image')} isMobile={isMobile} />
-          <MenuButton icon={<LucidePieChart className="w-5 h-5 md:w-6 md:h-6 text-violet-400" />} label="Nexus" onClick={() => handleAction('poll')} isMobile={isMobile} />
+          <MenuButton icon={<LucidePieChart className="w-5 h-5 md:w-6 md:h-6 text-violet-400" />} label="Poll" onClick={() => handleAction('poll')} isMobile={isMobile} />
         </div>
       )}
 
       {textInputPos && (
         <div className="absolute z-[4500] p-4" style={{ left: Math.max(20, Math.min(textInputPos.x, window.innerWidth - 340)), top: Math.max(20, Math.min(textInputPos.y, window.innerHeight - 200)) }}>
-          <textarea ref={textInputRef} value={tempText} onChange={e => setTempText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitInlineText(); } }} className="bg-zinc-950 text-white p-5 md:p-7 rounded-[24px] md:rounded-[40px] border-2 border-indigo-500 shadow-2xl outline-none text-lg md:text-2xl font-black min-w-[280px] md:min-w-[320px] max-w-[90vw]" placeholder="Type Signal..." />
+          <textarea ref={textInputRef} value={tempText} onChange={e => setTempText(e.target.value)} onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitInlineText(); } }} className="bg-zinc-950 text-white p-5 md:p-7 rounded-[24px] md:rounded-[40px] border-2 border-indigo-500 shadow-2xl outline-none text-lg md:text-2xl font-black min-w-[280px] md:min-w-[320px] max-w-[90vw]" placeholder="Type Broadcast..." />
         </div>
       )}
 
       {isRecording && (
         <div className="fixed inset-0 bg-black/98 z-[5000] flex items-center justify-center p-6">
-          <div className="bg-zinc-950 p-8 md:p-16 rounded-[40px] md:rounded-[70px] flex flex-col items-center gap-6 md:gap-10 border border-white/10 w-full max-w-lg">
-            <LucideMic className="w-16 h-16 md:w-20 md:h-20 text-indigo-500 animate-pulse" />
-            <canvas ref={waveformCanvasRef} width="400" height="100" className="w-full h-16 md:h-24 opacity-70" />
-            <button onClick={() => mediaRecorderRef.current?.stop()} className="w-full py-5 md:py-6 bg-rose-600 rounded-2xl md:rounded-[30px] text-[10px] md:text-[12px] font-black uppercase text-white shadow-2xl">TERMINATE SIGNAL</button>
+          <div className="bg-zinc-950 p-8 md:p-16 rounded-[40px] md:rounded-[70px] flex flex-col items-center gap-6 md:gap-10 border border-white/10 w-full max-lg">
+            <LucideMic className="w-16 h-16 text-indigo-500 animate-pulse" />
+            <canvas ref={waveformCanvasRef} width="400" height="100" className="w-full h-16 opacity-70" />
+            <button onClick={() => mediaRecorderRef.current?.stop()} className="w-full py-5 bg-rose-600 rounded-2xl text-[10px] font-black uppercase text-white shadow-2xl hover:bg-rose-500 transition-colors">TERMINATE SIGNAL</button>
           </div>
         </div>
       )}
@@ -455,15 +465,15 @@ const DraggableElement: React.FC<{ element: SpatialElement, onDelete: (id: strin
           <div onMouseDown={handleResize} className="absolute bottom-5 right-5 md:bottom-8 md:right-8 p-2 md:p-3 cursor-se-resize opacity-0 group-hover:opacity-60 text-zinc-500 transition-opacity"><LucideMaximize className="w-5 h-5 md:w-6 md:h-6 rotate-90" /></div>
 
           {element.type === 'text' && <div style={{ width: element.metadata?.width || 'auto' }} className="min-w-[80px] md:min-w-[100px]"><p className={`text-2xl md:text-4xl font-black break-words leading-tight`} style={textStyles}>{element.content}</p></div>}
-          {element.type === 'image' && <img src={element.content} style={{ width: element.metadata?.width || (isMobile ? 240 : 340) }} className="rounded-2xl md:rounded-[36px] shadow-2xl border border-white/5" alt="Signal Node" />}
-          {element.type === 'file' && <div style={{ width: element.metadata?.width || (isMobile ? 220 : 320) }} className="flex flex-col gap-4 md:gap-6"><div className="flex items-center gap-4 md:gap-6 p-2 bg-emerald-500/5 rounded-2xl"><LucideFileText className="w-10 h-10 md:w-12 md:h-12 text-emerald-500" /><div className="flex flex-col overflow-hidden"><span className="font-black text-base md:text-lg truncate text-white">{element.metadata?.fileName}</span><span className="text-[8px] md:text-[10px] font-black uppercase text-emerald-500/50">Mesh Relay Blob</span></div></div><a href={element.content} download={element.metadata?.fileName} className="w-full py-4 md:py-6 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl md:rounded-[32px] flex items-center justify-center gap-4 text-[10px] md:text-[12px] font-black uppercase tracking-widest shadow-2xl transition-all active:scale-95">Download Mesh File</a></div>}
+          {element.type === 'image' && <img src={element.content} style={{ width: element.metadata?.width || (isMobile ? 240 : 340) }} className="rounded-2xl md:rounded-[36px] shadow-2xl border border-white/5" alt="Spatial Node" />}
+          {element.type === 'file' && <div style={{ width: element.metadata?.width || (isMobile ? 220 : 320) }} className="flex flex-col gap-4 md:gap-6"><div className="flex items-center gap-4 md:gap-6 p-2 bg-emerald-500/5 rounded-2xl"><LucideFileText className="w-10 h-10 md:w-12 md:h-12 text-emerald-500" /><div className="flex flex-col overflow-hidden"><span className="font-black text-base md:text-lg truncate text-white">{element.metadata?.fileName}</span><span className="text-[8px] md:text-[10px] font-black uppercase text-emerald-500/50">Mesh Relay Blob</span></div></div><a href={element.content} download={element.metadata?.fileName} className="w-full py-4 md:py-6 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl md:rounded-[32px] flex items-center justify-center gap-4 text-[10px] md:text-[12px] font-black uppercase tracking-widest shadow-2xl transition-all active:scale-95">Retrieve P2P Blob</a></div>}
           {element.type === 'voice' && <div className="flex items-center gap-4 md:gap-8 min-w-[240px] md:min-w-[300px] p-2 bg-indigo-500/5 rounded-[24px] md:rounded-3xl"><button onClick={() => { if(audioRef.current){ isPlaying ? audioRef.current.pause() : audioRef.current.play(); setIsPlaying(!isPlaying); } }} className="w-14 h-14 md:w-18 md:h-18 shrink-0 bg-indigo-600 hover:bg-indigo-500 rounded-full flex items-center justify-center text-white shadow-3xl transition-all active:scale-90"><LucidePlay className="w-6 h-6 md:w-8 md:h-8 ml-1" /></button><audio ref={audioRef} src={element.content} onEnded={() => setIsPlaying(false)} className="hidden" /><div className="flex flex-col overflow-hidden"><span className="text-[8px] md:text-[10px] font-black uppercase opacity-30 tracking-[0.2em]">P2P Signal</span><span className="font-black text-indigo-400 text-base md:text-xl truncate">{element.author}</span></div></div>}
           {element.type === 'poll' && <div style={{ width: element.metadata?.width || (isMobile ? 280 : 360) }} className="space-y-4 md:space-y-6"><h4 className="font-black text-lg md:text-2xl tracking-tight text-white">{element.content}</h4><div className="space-y-3 md:space-y-4">{(element.metadata?.pollOptions || []).map((o, i) => {
             const votes = Object.values(element.metadata?.votes || {});
             const count = votes.filter(v => v === i).length;
             const perc = votes.length > 0 ? (count / votes.length) * 100 : 0;
             return <button key={i} onClick={() => { const m = yDoc.getMap('elements'); const it = m.get(element.id) as any; const v = { ...(it.metadata.votes || {}) }; v[yDoc.clientID.toString()] = i; m.set(element.id, { ...it, metadata: { ...it.metadata, votes: v } }); }} className="w-full p-4 md:p-6 rounded-2xl md:rounded-[32px] bg-zinc-900/50 border-2 border-white/5 hover:border-indigo-500/50 relative overflow-hidden transition-all text-left active:scale-[0.98]"><div className="absolute inset-0 bg-indigo-600/30 transition-all duration-700 ease-out" style={{ width: `${perc}%` }} /><div className="relative flex justify-between items-center z-10"><span className="font-black text-sm md:text-white">{o}</span><div className="flex items-center gap-2 md:gap-3"><span className="text-[8px] md:text-[10px] font-black text-indigo-400">{Math.round(perc)}%</span><span className="text-[7px] md:text-[9px] font-black bg-black/60 px-1.5 py-0.5 rounded-md text-zinc-500">{count}</span></div></div></button>;
-          })}</div><div className="text-[7px] md:text-[8px] font-black uppercase text-zinc-600 tracking-[0.3em] text-center pt-1 md:pt-2">Global Nexus Poll Data</div></div>}
+          })}</div><div className="text-[7px] md:text-[8px] font-black uppercase text-zinc-600 tracking-[0.3em] text-center pt-1 md:pt-2">Global Mesh Poll</div></div>}
         </div>
       </div>
     </Draggable>
