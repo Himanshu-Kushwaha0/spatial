@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import * as Y from 'yjs';
 import { WebrtcProvider } from 'y-webrtc';
@@ -14,11 +15,14 @@ import {
   LucideGripHorizontal,
   LucideAppWindow,
   LucideMinimize2,
+  LucideRefreshCw,
   LucideWifi,
   LucideWifiOff,
   LucideShieldCheck,
   LucideTerminal,
-  LucideCommand
+  LucideCommand,
+  LucideActivity,
+  LucideZap
 } from 'lucide-react';
 
 const EPHEMERAL_TTL = 5000; 
@@ -39,6 +43,8 @@ const App: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [peerCount, setPeerCount] = useState(0);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [reconnectCounter, setReconnectCounter] = useState(0);
+  const [lastPulse, setLastPulse] = useState(Date.now());
 
   const refs = {
     header: useRef<HTMLDivElement>(null),
@@ -46,7 +52,8 @@ const App: React.FC = () => {
     status: useRef<HTMLDivElement>(null),
     chat: useRef<HTMLDivElement>(null),
     lastCursor: useRef<number>(0),
-    lastUserCount: useRef<number>(0)
+    lastUserCount: useRef<number>(0),
+    reconnectTimer: useRef<number | null>(null)
   };
 
   useEffect(() => {
@@ -55,12 +62,14 @@ const App: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Sync dark mode class to body
   useEffect(() => {
+    const root = document.documentElement;
     if (isDarkMode) {
       document.body.classList.remove('light-theme');
+      root.style.setProperty('--bg-color', '#000000');
     } else {
       document.body.classList.add('light-theme');
+      root.style.setProperty('--bg-color', '#f8fafc');
     }
   }, [isDarkMode]);
 
@@ -93,6 +102,11 @@ const App: React.FC = () => {
     }]);
   }, [yDoc]);
 
+  const triggerReconnect = useCallback(() => {
+    setReconnectCounter(prev => prev + 1);
+    addSystemMessage("MESH_TUNNEL::AUTO_RECOVERY_ENGAGED");
+  }, [addSystemMessage]);
+
   useEffect(() => {
     if (!userName) return;
 
@@ -105,16 +119,16 @@ const App: React.FC = () => {
       {
         signaling: [
           'wss://y-webrtc-signaling-us.herokuapp.com',
-          'wss://signaling.yjs.dev',
-          'wss://y-webrtc-ck.herokuapp.com'
+          'wss://y-webrtc-signaling-eu.herokuapp.com',
+          'wss://signaling.yjs.dev'
         ],
         peerOpts: {
           config: {
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
-            ],
-            iceCandidatePoolSize: 10
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' }
+            ]
           }
         }
       }
@@ -129,10 +143,12 @@ const App: React.FC = () => {
       setElements(all.filter((el: any) => 
         !el.recipientId || el.recipientId === myId || el.authorId === myId
       ) as SpatialElement[]);
+      setLastPulse(Date.now());
     };
 
     const syncChat = () => {
-      setChatHistory(yChat.toArray().slice(-100)); 
+      setChatHistory(yChat.toArray().slice(-100));
+      setLastPulse(Date.now());
     };
 
     yElements.observe(syncElements);
@@ -150,12 +166,21 @@ const App: React.FC = () => {
 
     webrtcProvider.on('status', (e: { connected: boolean }) => {
       setIsConnected(e.connected);
-      if (e.connected) addSystemMessage(`NODE_${userName.toUpperCase()}::CONNECTED_TO_MESH`);
+      if (e.connected) {
+        addSystemMessage(`UPLINK::${userName.toUpperCase()}::READY`);
+      } else {
+        // If we lose signaling for more than 5s, try to bounce back
+        if (refs.reconnectTimer.current) window.clearTimeout(refs.reconnectTimer.current);
+        refs.reconnectTimer.current = window.setTimeout(() => {
+          if (!isConnected) triggerReconnect();
+        }, 5000);
+      }
     });
 
     const peerCheck = setInterval(() => {
-      setPeerCount(webrtcProvider.room?.webrtcConns.size || 0);
-    }, 5000);
+      const conns = webrtcProvider.room?.webrtcConns;
+      setPeerCount(conns ? conns.size : 0);
+    }, 2000);
 
     webrtcProvider.awareness.on('change', () => {
       const states = webrtcProvider.awareness.getStates();
@@ -173,7 +198,6 @@ const App: React.FC = () => {
         }
       });
 
-      refs.lastUserCount.current = nextUsers.length;
       setCursors(nextCursors);
       setOnlineUsers(nextUsers);
       setTypingUsers(typing);
@@ -183,9 +207,9 @@ const App: React.FC = () => {
     return () => { 
       clearInterval(peerCheck);
       webrtcProvider.destroy(); 
-      yDoc.destroy(); 
+      if (refs.reconnectTimer.current) window.clearTimeout(refs.reconnectTimer.current);
     };
-  }, [yDoc, userName, addSystemMessage]);
+  }, [yDoc, userName, addSystemMessage, reconnectCounter, triggerReconnect, isConnected]);
 
   const addElement = useCallback((el: Omit<SpatialElement, 'author' | 'timestamp' | 'authorId'>) => {
     yDoc.transact(() => {
@@ -235,12 +259,7 @@ const App: React.FC = () => {
   }, [yDoc]);
 
   const handleFloating = async () => {
-    if (!('documentPictureInPicture' in window)) {
-      return alert("Nexus PiP requires a modern Chrome-based browser.");
-    }
-    if (window.self !== window.top) {
-      return alert("SECURITY_INFO: PiP is disabled in embedded contexts.");
-    }
+    if (!('documentPictureInPicture' in window)) return alert("Nexus PiP requires a modern Chrome-based browser.");
     try {
       const pip = await (window as any).documentPictureInPicture.requestWindow({ width: 420, height: 720 });
       setIsFloating(true);
@@ -258,98 +277,63 @@ const App: React.FC = () => {
         setIsFloating(false);
         if (refs.chat.current) document.body.appendChild(refs.chat.current);
       });
-    } catch (e) { 
-      console.error("PiP_INIT_FAILED:", e);
-    }
+    } catch (e) { console.error("PiP_INIT_FAILED:", e); }
   };
 
   if (!userName) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-[var(--bg-color)] overflow-hidden p-6 relative">
+      <div className="h-screen w-full flex items-center justify-center bg-[var(--bg-color)] transition-colors duration-500 overflow-hidden p-6 relative">
         <div className="absolute inset-0 grid-bg opacity-10 pointer-events-none" />
-        <div className="w-full max-w-lg p-12 glass rounded-2xl border-2 border-indigo-500/20 shadow-[0_0_80px_rgba(99,102,241,0.15)] text-center animate-pop font-mono">
-          <LucideCommand className="w-16 h-16 text-indigo-500 mx-auto mb-8 animate-pulse" />
+        <div className="w-full max-w-lg p-12 glass rounded-3xl border border-indigo-500/20 shadow-[0_0_80px_rgba(99,102,241,0.15)] text-center animate-pop font-mono">
+          <LucideZap className="w-16 h-16 text-indigo-500 mx-auto mb-8 animate-pulse" />
           <h1 className="text-4xl font-black text-[var(--text-color)] tracking-tighter mb-2 uppercase">NEXUS_ACCESS</h1>
-          <p className="text-indigo-400/40 mb-10 uppercase tracking-[0.6em] text-[10px] font-bold">P2P Encrypted Playground</p>
+          <p className="text-indigo-400/40 mb-10 uppercase tracking-[0.6em] text-[10px] font-bold">P2P Mesh Overlay</p>
           <form onSubmit={e => { e.preventDefault(); if (tempName.trim()) { localStorage.setItem('nexus-username', tempName.trim()); setUserName(tempName.trim()); } }} className="space-y-6">
-            <input autoFocus value={tempName} onChange={e => setTempName(e.target.value)} placeholder="ENTER_IDENTIFIER" className="w-full bg-[var(--surface-color)] border-2 border-white/5 rounded-xl p-6 text-[var(--text-color)] text-xl text-center outline-none focus:border-indigo-500 transition-all font-mono placeholder:text-zinc-800" />
-            <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-6 rounded-xl text-white font-black text-lg flex items-center justify-center gap-4 active:scale-[0.98] transition-all uppercase tracking-[0.2em] shadow-2xl">
-              Initialize Node <LucideArrowRight className="w-6 h-6" />
+            <input autoFocus value={tempName} onChange={e => setTempName(e.target.value)} placeholder="ENTER_NODE_ID" className="w-full bg-[var(--surface-color)] border border-[var(--border-color)] rounded-2xl p-6 text-[var(--text-color)] text-xl text-center outline-none focus:border-indigo-500 transition-all font-mono placeholder:text-zinc-800" />
+            <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-6 rounded-2xl text-white font-black text-lg flex items-center justify-center gap-4 active:scale-[0.98] transition-all uppercase tracking-[0.2em] shadow-2xl">
+              Sync Mesh <LucideArrowRight className="w-6 h-6" />
             </button>
           </form>
-          <div className="mt-8 flex items-center justify-center gap-3 text-[10px] font-bold text-zinc-600 tracking-widest uppercase">
-            <LucideShieldCheck className="w-4 h-4 text-emerald-500" /> Secure_Session_Active
-          </div>
         </div>
       </div>
     );
   }
 
-  const actuallyConnected = isConnected && (peerCount > 0 || onlineUsers.length > 1);
+  const signalStatus = isConnected ? (peerCount > 0 ? 'CONVERGED' : 'SCANNING') : 'OFFLINE';
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[var(--bg-color)] font-sans selection:bg-indigo-500/40">
+    <div className="h-screen w-screen overflow-hidden bg-[var(--bg-color)] transition-colors duration-500 font-sans selection:bg-indigo-500/40">
       <div className="absolute inset-0 grid-bg opacity-[0.05] pointer-events-none" />
       
-      {isMobile ? (
-        <div className="absolute top-4 left-4 right-4 z-[3000] flex flex-col gap-2 pointer-events-none font-mono">
-          <div className="pointer-events-auto flex items-center justify-between px-6 py-4 bg-[var(--surface-color)]/90 rounded-2xl border border-[var(--border-color)] backdrop-blur-3xl shadow-2xl">
-            <div className="flex items-center gap-3">
-              <span className="relative flex h-2 w-2">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${actuallyConnected ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                <span className={`relative inline-flex rounded-full h-2 w-2 ${actuallyConnected ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
-              </span>
-              <span className="text-[9px] font-black uppercase tracking-widest text-[var(--text-color)]/50">{onlineUsers.length} NODES</span>
+      <Draggable nodeRef={refs.header} handle=".drag" disabled={isMobile}>
+        <div ref={refs.header} className={`absolute z-[3000] pointer-events-auto font-mono ${isMobile ? 'top-4 left-4 right-4' : 'top-8 left-10'}`}>
+          <div className="flex items-center gap-5 px-8 py-5 bg-[var(--surface-color)]/95 rounded-2xl shadow-2xl border border-[var(--border-color)] backdrop-blur-3xl">
+            <div className="drag cursor-grab active:cursor-grabbing p-1 text-zinc-800 hover:text-indigo-400 transition-colors hidden md:block"><LucideGripHorizontal className="w-5 h-5" /></div>
+            <div className={`flex items-center gap-4 ${isConnected ? 'text-emerald-500' : 'text-rose-500'}`}>
+              <div className="relative flex h-3 w-3">
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isConnected ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                <span className={`relative inline-flex rounded-full h-3 w-3 ${isConnected ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+              </div>
+              <span className="text-[10px] font-black uppercase tracking-[0.4em]">{`MESH_${signalStatus}`}</span>
             </div>
-            <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2 rounded-lg ${isMiniMode ? 'text-indigo-400' : 'text-zinc-600'}`}><LucideMinimize2 className="w-5 h-5" /></button>
+            <div className="flex items-center gap-3">
+               <div key={lastPulse} className="w-2 h-2 rounded-full bg-indigo-500 animate-ping opacity-30" />
+               <button onClick={triggerReconnect} className="p-2 hover:bg-white/5 rounded-md text-zinc-600 hover:text-indigo-400 transition-all"><LucideRefreshCw className="w-4 h-4" /></button>
+            </div>
           </div>
         </div>
-      ) : (
-        <>
-          <Draggable nodeRef={refs.header} handle=".drag">
-            <div ref={refs.header} className="absolute top-8 left-10 z-[3000] pointer-events-auto font-mono">
-              <div className="flex items-center gap-5 px-8 py-5 bg-[var(--surface-color)]/95 rounded-xl shadow-2xl border border-[var(--border-color)] backdrop-blur-3xl">
-                <div className="drag cursor-grab active:cursor-grabbing p-1 text-zinc-800 hover:text-indigo-400 transition-colors"><LucideGripHorizontal className="w-5 h-5" /></div>
-                <div className={`flex items-center gap-4 ${actuallyConnected ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  <span className="relative flex h-2 w-2">
-                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${actuallyConnected ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                    <span className={`relative inline-flex rounded-full h-2 w-2 ${actuallyConnected ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
-                  </span>
-                  <span className="text-[10px] font-black uppercase tracking-[0.4em]">{actuallyConnected ? 'GRID_SYNC::ESTABLISHED' : 'MESH_TUNNELING::OFFLINE'}</span>
-                </div>
-              </div>
-            </div>
-          </Draggable>
+      </Draggable>
 
-          <Draggable nodeRef={refs.status} handle=".drag">
-            <div ref={refs.status} className="absolute top-8 left-1/2 -translate-x-1/2 z-[3000] pointer-events-auto font-mono">
-              <div className="flex items-center gap-6 px-12 py-5 bg-[var(--surface-color)]/95 rounded-xl shadow-2xl border border-[var(--border-color)] backdrop-blur-3xl">
-                <div className="drag cursor-grab active:cursor-grabbing text-zinc-800"><LucideGripHorizontal className="w-4 h-4" /></div>
-                <div className="flex items-center gap-3 text-indigo-400">
-                  <LucideTerminal className="w-4 h-4" />
-                  <span className="text-[10px] font-bold uppercase tracking-[0.4em]">{userName.toUpperCase().slice(0, 10)}</span>
-                </div>
-                <div className="w-px h-5 bg-white/10" />
-                <div className="flex items-center gap-4 text-zinc-500">
-                  <LucideUsers className="w-4 h-4 text-zinc-800" />
-                  <span className="text-[11px] font-bold uppercase tracking-widest">{onlineUsers.length} NODES</span>
-                </div>
-              </div>
-            </div>
-          </Draggable>
-
-          <Draggable nodeRef={refs.cluster} handle=".drag">
-            <div ref={refs.cluster} className="absolute top-8 right-10 z-[3000] pointer-events-auto">
-              <div className="flex items-center gap-4 px-8 py-5 bg-[var(--surface-color)]/95 rounded-xl shadow-2xl border border-[var(--border-color)] backdrop-blur-3xl">
-                <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2 transition-all ${isMiniMode ? 'text-indigo-400' : 'text-zinc-600 hover:text-indigo-400'}`}><LucideMinimize2 className="w-6 h-6" /></button>
-                <button onClick={handleFloating} className="p-2 text-zinc-600 hover:text-white transition-all"><LucideAppWindow className="w-6 h-6" /></button>
-                <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 transition-colors ${!isDarkMode ? 'text-indigo-500' : 'text-zinc-600'}`}>{isDarkMode ? <LucideSun className="w-6 h-6" /> : <LucideMoon className="w-6 h-6" />}</button>
-                <div className="drag cursor-grab active:cursor-grabbing text-zinc-800 ml-2"><LucideGripHorizontal className="w-4 h-4" /></div>
-              </div>
-            </div>
-          </Draggable>
-        </>
-      )}
+      <Draggable nodeRef={refs.cluster} handle=".drag" disabled={isMobile}>
+        <div ref={refs.cluster} className={`absolute z-[3000] pointer-events-auto ${isMobile ? 'bottom-4 right-4' : 'top-8 right-10'}`}>
+          <div className="flex items-center gap-4 px-8 py-5 bg-[var(--surface-color)]/95 rounded-2xl shadow-2xl border border-[var(--border-color)] backdrop-blur-3xl">
+            <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2 transition-all ${isMiniMode ? 'text-indigo-400' : 'text-zinc-600 hover:text-indigo-400'}`}><LucideMinimize2 className="w-6 h-6" /></button>
+            <button onClick={handleFloating} className="p-2 text-zinc-600 hover:text-white transition-all"><LucideAppWindow className="w-6 h-6" /></button>
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 transition-colors ${!isDarkMode ? 'text-indigo-500' : 'text-zinc-600'}`}>{isDarkMode ? <LucideSun className="w-6 h-6" /> : <LucideMoon className="w-6 h-6" />}</button>
+            <div className="drag cursor-grab active:cursor-grabbing text-zinc-800 ml-2 hidden md:block"><LucideGripHorizontal className="w-4 h-4" /></div>
+          </div>
+        </div>
+      </Draggable>
 
       {!isMiniMode && (
         <Canvas 
@@ -375,6 +359,8 @@ const App: React.FC = () => {
           isDarkMode={isDarkMode} 
           isFloating={isFloating} 
           isMiniMode={isMiniMode} 
+          signalConnected={isConnected}
+          peerCount={peerCount}
         />
       </div>
     </div>

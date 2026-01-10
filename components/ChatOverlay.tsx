@@ -7,7 +7,8 @@ import {
   LucideTerminal,
   LucideLock,
   LucideChevronDown,
-  LucideInfo
+  LucideInfo,
+  LucideActivity
 } from 'lucide-react';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Draggable from 'react-draggable';
@@ -23,6 +24,8 @@ interface ChatOverlayProps {
   isDarkMode: boolean;
   isFloating?: boolean;
   isMiniMode?: boolean;
+  signalConnected?: boolean;
+  peerCount?: number;
 }
 
 const ChatOverlay: React.FC<ChatOverlayProps> = ({ 
@@ -33,7 +36,9 @@ const ChatOverlay: React.FC<ChatOverlayProps> = ({
   onlineUsers, 
   myId, 
   isFloating, 
-  isMiniMode 
+  isMiniMode,
+  signalConnected,
+  peerCount
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'users'>('chat');
@@ -110,7 +115,17 @@ const ChatOverlay: React.FC<ChatOverlayProps> = ({
         <div className="flex items-center gap-4 overflow-hidden">
           {!isFloating && !isMobile && <div className="chat-handle p-2 text-zinc-500 cursor-grab active:cursor-grabbing hover:text-indigo-600 transition-colors"><LucideGripVertical className="w-4 h-4" /></div>}
           <button onClick={() => !isFloating && setIsOpen(!isOpen)} className="w-11 h-11 rounded-lg shrink-0 flex items-center justify-center bg-indigo-700 shadow-2xl active:scale-90 transition-all"><LucideMessageSquare className="w-5 h-5 text-white" /></button>
-          {(isOpen || isFloating) && <div className="flex flex-col min-w-0"><span className="font-black text-[var(--text-color)] text-xs tracking-tighter uppercase">MESH_OS_RELAY</span><span className="text-[8px] text-emerald-600 font-bold uppercase tracking-widest animate-pulse">{onlineUsers.length} NODES_ACTIVE</span></div>}
+          {(isOpen || isFloating) && (
+            <div className="flex flex-col min-w-0">
+              <span className="font-black text-[var(--text-color)] text-xs tracking-tighter uppercase">MESH_RELAY</span>
+              <div className="flex items-center gap-2">
+                <span className={`w-1.5 h-1.5 rounded-full ${signalConnected ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                <span className={`text-[8px] font-bold uppercase tracking-widest ${signalConnected ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  {signalConnected ? `${(peerCount || 0)} PEERS_FOUND` : 'SIGNAL_LOST'}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
         {(isOpen || isFloating) && <div className="flex gap-2">
           <button onClick={() => setActiveTab('chat')} className={`p-2.5 rounded-md transition-colors ${activeTab === 'chat' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'text-zinc-500 hover:text-indigo-400'}`}><LucideTerminal className="w-4 h-4" /></button>
@@ -136,7 +151,7 @@ const ChatOverlay: React.FC<ChatOverlayProps> = ({
                   <div key={item.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-pop w-full group`}>
                     <div className="flex items-center gap-2 mb-1.5 px-1">
                       {!isMe && <div className="w-1.5 h-1.5 rounded-full" style={{ background: item.authorColor || '#6366f1' }} />}
-                      <span className={`text-[8px] font-black uppercase tracking-[0.2em] ${isMe ? 'text-indigo-500' : 'text-zinc-500'}`}>
+                      <span className={`text-[8px] font-black uppercase tracking-[0.2em] ${isMe ? 'text-indigo-400' : 'text-zinc-500'}`}>
                         {isMe ? 'LOCAL_NODE' : item.author.toUpperCase()}
                       </span>
                       {item.recipientId && <span className="text-[8px] font-black text-amber-600 uppercase tracking-[0.2em]">» WHISPER_TUNNEL</span>}
