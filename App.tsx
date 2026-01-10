@@ -29,6 +29,7 @@ const App: React.FC = () => {
   const [yDoc] = useState(() => new Y.Doc());
   const [provider, setProvider] = useState<WebrtcProvider | null>(null);
   const [elements, setElements] = useState<SpatialElement[]>([]);
+  const [chatHistory, setChatHistory] = useState<any[]>([]);
   const [cursors, setCursors] = useState<Record<string, CursorState>>({});
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -73,7 +74,7 @@ const App: React.FC = () => {
     const info = getRoomInfoFromHash();
     updateHash(info);
 
-    // HYBRID MESH DISCOVERY: Utilizing Google's Public Infrastructure & Multi-Relay Signaling
+    // GOOGLE STUN INFRASTRUCTURE + MULTI-SIGNALLING MESH
     const webrtcProvider = new WebrtcProvider(
       info.roomId,
       yDoc,
@@ -89,15 +90,12 @@ const App: React.FC = () => {
         ],
         peerOpts: {
           config: {
-            // GOOGLE GLOBAL STUN BACKBONE: Crucial for P2P across the open internet
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
               { urls: 'stun:stun1.l.google.com:19302' },
               { urls: 'stun:stun2.l.google.com:19302' },
               { urls: 'stun:stun3.l.google.com:19302' },
-              { urls: 'stun:stun4.l.google.com:19302' },
-              { urls: 'stun:stun.services.mozilla.com' },
-              { urls: 'stun:global.stun.twilio.com:3478' }
+              { urls: 'stun:stun4.l.google.com:19302' }
             ],
             iceCandidatePoolSize: 12
           }
@@ -106,6 +104,8 @@ const App: React.FC = () => {
     );
 
     const yElements = yDoc.getMap('elements');
+    const yChat = yDoc.getArray('chatHistory');
+
     const syncElements = () => {
       const myId = yDoc.clientID.toString();
       const all = Array.from(yElements.values() as any);
@@ -114,8 +114,15 @@ const App: React.FC = () => {
       ) as SpatialElement[]);
     };
 
+    const syncChat = () => {
+      setChatHistory(yChat.toArray());
+    };
+
     yElements.observe(syncElements);
+    yChat.observe(syncChat);
+    
     syncElements();
+    syncChat();
 
     const myColor = `hsl(${Math.random() * 360}, 85%, 65%)`;
     webrtcProvider.awareness.setLocalStateField('user', {
@@ -166,6 +173,18 @@ const App: React.FC = () => {
       authorId: yDoc.clientID.toString()
     };
     yMap.set(payload.id, payload as any);
+  }, [yDoc, userName]);
+
+  const addChatMessage = useCallback((text: string, whisperTargetId?: string) => {
+    const yChat = yDoc.getArray('chatHistory');
+    yChat.push([{
+      id: Math.random().toString(36).substring(7),
+      author: userName || 'Anonymous',
+      authorId: yDoc.clientID.toString(),
+      text,
+      recipientId: whisperTargetId,
+      timestamp: Date.now()
+    }]);
   }, [yDoc, userName]);
 
   const updateCursor = useCallback((x: number, y: number) => {
@@ -289,16 +308,10 @@ const App: React.FC = () => {
         />
       )}
       
-      {isMiniMode && (
-        <div className="absolute inset-0 flex items-center justify-center opacity-5 pointer-events-none">
-          <LucideZap className="w-48 h-48 md:w-96 md:h-96 text-indigo-500 animate-pulse" />
-        </div>
-      )}
-
       <div ref={refs.chat} className={isFloating ? "h-full w-full" : ""}>
         <ChatOverlay 
-          elements={elements} 
-          onAddElement={addElement} 
+          chatHistory={chatHistory}
+          onSendChatMessage={addChatMessage} 
           onlineUsers={onlineUsers} 
           myId={yDoc.clientID.toString()} 
           isDarkMode={isDarkMode} 
