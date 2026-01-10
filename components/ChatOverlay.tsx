@@ -4,17 +4,20 @@ import {
   LucideUsers,
   LucideX,
   LucideGripVertical,
-  LucideMaximize2,
-  LucideCopy,
-  LucideCheck
+  LucideTerminal,
+  LucideLock,
+  LucideChevronDown,
+  LucideInfo
 } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Draggable from 'react-draggable';
 import { OnlineUser } from '../types';
 
 interface ChatOverlayProps {
   chatHistory: any[];
   onSendChatMessage: (text: string, whisperTargetId?: string) => void;
+  onTyping: (isTyping: boolean) => void;
+  typingUsers: string[];
   onlineUsers: OnlineUser[];
   myId: string;
   isDarkMode: boolean;
@@ -22,76 +25,76 @@ interface ChatOverlayProps {
   isMiniMode?: boolean;
 }
 
-const ChatOverlay: React.FC<ChatOverlayProps> = ({ chatHistory, onSendChatMessage, onlineUsers, myId, isDarkMode, isFloating, isMiniMode }) => {
+const ChatOverlay: React.FC<ChatOverlayProps> = ({ 
+  chatHistory, 
+  onSendChatMessage, 
+  onTyping,
+  typingUsers,
+  onlineUsers, 
+  myId, 
+  isFloating, 
+  isMiniMode 
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'users'>('chat');
   const [message, setMessage] = useState('');
   const [whisperTarget, setWhisperTarget] = useState<OnlineUser | null>(null);
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  const [dimensions, setDimensions] = useState({ 
-    width: window.innerWidth < 768 ? 320 : 380, 
-    height: window.innerWidth < 768 ? 400 : 480 
-  });
-  const [isResizing, setIsResizing] = useState(false);
-  const [copyingId, setCopyingId] = useState<string | null>(null);
-  
+  const [isMobile] = useState(window.innerWidth < 768);
+  const [showScrollDown, setShowScrollDown] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const draggableRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    const checkResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', checkResize);
-    return () => window.removeEventListener('resize', checkResize);
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ 
+        top: scrollRef.current.scrollHeight, 
+        behavior 
+      });
+      setShowScrollDown(false);
+    }
   }, []);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      // Direct DOM scroll to handle PiP window sync lag
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    const el = scrollRef.current;
+    if (!el) return;
+    const isAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 100;
+    if (isAtBottom) {
+      scrollToBottom('smooth');
+    } else if (chatHistory.length > 0) {
+      setShowScrollDown(true);
     }
-  }, [chatHistory.length, isOpen, activeTab, isFloating]);
+  }, [chatHistory.length, isOpen, activeTab, scrollToBottom]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const isAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 50;
+    if (isAtBottom && showScrollDown) setShowScrollDown(false);
+  };
+
+  const handleTyping = (val: string) => {
+    setMessage(val);
+    onTyping(true);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = window.setTimeout(() => {
+      onTyping(false);
+    }, 2000);
+  };
 
   const handleSubmit = (e?: React.FormEvent) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
+    if (e) e.preventDefault();
     if (!message.trim()) return;
     onSendChatMessage(message, whisperTarget?.clientId);
     setMessage('');
     setWhisperTarget(null);
+    onTyping(false);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    setTimeout(() => scrollToBottom('smooth'), 50);
   };
 
-  const copyText = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyingId(id);
-      setTimeout(() => setCopyingId(null), 2000);
-    } catch (err) { console.error('Copy failed:', err); }
-  };
-
-  const handleResizeStart = (e: React.MouseEvent) => {
-    e.preventDefault(); e.stopPropagation();
-    setIsResizing(true);
-    const startX = e.clientX, startY = e.clientY;
-    const startW = dimensions.width, startH = dimensions.height;
-    
-    // DETACHED EVENT LISTENER: Uses ownerDocument to stay interactive in PiP
-    const targetDoc = draggableRef.current?.ownerDocument || document;
-
-    const move = (ev: MouseEvent) => setDimensions({
-      width: Math.max(280, startW + (startX - ev.clientX)),
-      height: Math.max(200, startH + (startY - ev.clientY))
-    });
-    
-    const up = () => { 
-      setIsResizing(false); 
-      targetDoc.removeEventListener('mousemove', move); 
-      targetDoc.removeEventListener('mouseup', up); 
-    };
-    
-    targetDoc.addEventListener('mousemove', move); 
-    targetDoc.addEventListener('mouseup', up);
+  const formatTime = (ts: number) => {
+    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   const visibleMessages = chatHistory.filter(msg => 
@@ -100,84 +103,103 @@ const ChatOverlay: React.FC<ChatOverlayProps> = ({ chatHistory, onSendChatMessag
 
   const content = (
     <div 
-      style={isFloating ? { width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 } : { width: dimensions.width, height: isOpen ? dimensions.height : (isMobile ? 64 : 90) }}
-      className={`bg-black rounded-[24px] md:rounded-[40px] shadow-[0_0_120px_rgba(0,0,0,1)] flex flex-col overflow-hidden border-2 border-indigo-500/10 transition-all duration-300 relative max-w-full`}
+      style={isFloating ? { width: '100%', height: '100%' } : { width: isMobile ? 'calc(100vw - 32px)' : 420, height: isOpen ? 560 : (isMobile ? 70 : 86) }}
+      className="bg-[var(--surface-color)] rounded-xl shadow-[0_50px_120px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden border border-[var(--border-color)] transition-all duration-400 relative secure-border font-mono"
     >
-      {!isFloating && isOpen && !isMobile && (
-        <div onMouseDown={handleResizeStart} className="absolute top-0 left-0 w-12 h-12 cursor-nw-resize flex items-center justify-center z-[50] hover:bg-white/5 rounded-br-3xl transition-colors group" title="Scale interface">
-          <LucideMaximize2 className="w-5 h-5 text-zinc-800 group-hover:text-indigo-500 -rotate-90" />
+      <div className="flex items-center p-5 bg-[var(--surface-color)] border-b border-[var(--border-color)] justify-between z-50">
+        <div className="flex items-center gap-4 overflow-hidden">
+          {!isFloating && !isMobile && <div className="chat-handle p-2 text-zinc-500 cursor-grab active:cursor-grabbing hover:text-indigo-600 transition-colors"><LucideGripVertical className="w-4 h-4" /></div>}
+          <button onClick={() => !isFloating && setIsOpen(!isOpen)} className="w-11 h-11 rounded-lg shrink-0 flex items-center justify-center bg-indigo-700 shadow-2xl active:scale-90 transition-all"><LucideMessageSquare className="w-5 h-5 text-white" /></button>
+          {(isOpen || isFloating) && <div className="flex flex-col min-w-0"><span className="font-black text-[var(--text-color)] text-xs tracking-tighter uppercase">MESH_OS_RELAY</span><span className="text-[8px] text-emerald-600 font-bold uppercase tracking-widest animate-pulse">{onlineUsers.length} NODES_ACTIVE</span></div>}
         </div>
-      )}
-
-      <div className={`flex items-center ${isMobile ? 'p-3' : 'p-5'} bg-zinc-950/80 border-b border-white/5 ${isOpen || isFloating ? 'justify-between' : 'justify-center h-full'}`}>
-        <div className="flex items-center gap-3 md:gap-4 overflow-hidden">
-          {!isFloating && !isMobile && <div className={`chat-handle p-2 text-zinc-700 cursor-grab active:cursor-grabbing hover:text-indigo-400 transition-colors ${isOpen ? '' : 'hidden'}`}><LucideGripVertical className="w-4 h-4" /></div>}
-          <button onClick={() => !isFloating && setIsOpen(!isOpen)} className={`${isMobile ? 'w-10 h-10' : 'w-12 h-12'} rounded-xl md:rounded-[20px] shrink-0 flex items-center justify-center bg-indigo-600 shadow-2xl active:scale-90 transition-transform`}><LucideMessageSquare className="w-4 h-4 md:w-5 md:h-5 text-white" /></button>
-          {(isOpen || isFloating) && <div className="flex flex-col min-w-0"><span className="font-black text-white text-xs md:text-sm tracking-tight truncate">Nexus Signal</span><span className="text-[7px] md:text-[8px] text-indigo-500/60 font-black uppercase tracking-[0.2em]">{onlineUsers.length} Peer Nodes</span></div>}
-        </div>
-        {(isOpen || isFloating) && <div className="flex gap-1">
-          <button onClick={() => setActiveTab('chat')} className={`p-2 md:p-3 rounded-lg transition-all ${activeTab === 'chat' ? 'bg-indigo-600/20 text-indigo-400' : 'text-zinc-600 hover:text-white'}`}><LucideMessageSquare className="w-3.5 h-3.5 md:w-4 md:h-4" /></button>
-          <button onClick={() => setActiveTab('users')} className={`p-2 md:p-3 rounded-lg transition-all ${activeTab === 'users' ? 'bg-indigo-600/20 text-indigo-400' : 'text-zinc-600 hover:text-white'}`}><LucideUsers className="w-3.5 h-3.5 md:w-4 md:h-4" /></button>
+        {(isOpen || isFloating) && <div className="flex gap-2">
+          <button onClick={() => setActiveTab('chat')} className={`p-2.5 rounded-md transition-colors ${activeTab === 'chat' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'text-zinc-500 hover:text-indigo-400'}`}><LucideTerminal className="w-4 h-4" /></button>
+          <button onClick={() => setActiveTab('users')} className={`p-2.5 rounded-md transition-colors ${activeTab === 'users' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'text-zinc-500 hover:text-indigo-400'}`}><LucideUsers className="w-4 h-4" /></button>
         </div>}
       </div>
 
       {(isOpen || isFloating) && (
         <>
-          <div ref={scrollRef} className={`flex-1 overflow-y-auto ${isMobile ? 'px-4 py-4' : 'px-6 py-8'} space-y-4 md:space-y-6 scrollbar-none bg-black/60`}>
+          <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-6 py-6 space-y-4 scrollbar-none bg-[var(--bg-color)]/20 relative">
             {activeTab === 'chat' ? (
-              visibleMessages.length > 0 ? visibleMessages.map((item) => {
+              visibleMessages.map((item) => {
+                if (item.isSystem) {
+                  return (
+                    <div key={item.id} className="flex items-center gap-3 px-4 py-2 border border-[var(--border-color)] bg-[var(--surface-color)]/40 rounded-md animate-pop">
+                      <LucideInfo className="w-3 h-3 text-indigo-500/50" />
+                      <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">{item.text}</span>
+                    </div>
+                  );
+                }
                 const isMe = item.authorId === myId;
                 return (
                   <div key={item.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-pop w-full group`}>
-                    <div className="flex items-center gap-2 max-w-[95%]">
-                      {isMe && !isMobile && (
-                        <button onClick={() => copyText(item.text, item.id)} className={`p-2 rounded-xl transition-all opacity-0 group-hover:opacity-100 ${copyingId === item.id ? 'text-emerald-500 bg-emerald-500/10' : 'text-zinc-600 hover:bg-white/5 hover:text-indigo-400'}`}>
-                          {copyingId === item.id ? <LucideCheck className="w-4 h-4" /> : <LucideCopy className="w-4 h-4" />}
-                        </button>
-                      )}
-                      <div className={`${isMobile ? 'px-4 py-3' : 'px-6 py-4'} rounded-2xl md:rounded-[28px] text-xs md:text-sm break-words shadow-2xl leading-relaxed ${item.recipientId ? 'bg-amber-500/10 border border-amber-500/20 text-amber-200' : isMe ? 'bg-indigo-600 text-white' : 'bg-zinc-900 text-zinc-300'}`}>{item.text}</div>
+                    <div className="flex items-center gap-2 mb-1.5 px-1">
+                      {!isMe && <div className="w-1.5 h-1.5 rounded-full" style={{ background: item.authorColor || '#6366f1' }} />}
+                      <span className={`text-[8px] font-black uppercase tracking-[0.2em] ${isMe ? 'text-indigo-500' : 'text-zinc-500'}`}>
+                        {isMe ? 'LOCAL_NODE' : item.author.toUpperCase()}
+                      </span>
+                      {item.recipientId && <span className="text-[8px] font-black text-amber-600 uppercase tracking-[0.2em]">» WHISPER_TUNNEL</span>}
+                      <span className="text-[7px] text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity ml-1">{formatTime(item.timestamp)}</span>
                     </div>
-                    <span className="text-[7px] md:text-[8px] mt-1 md:mt-2 font-black text-zinc-800 uppercase tracking-widest px-2 group-hover:text-zinc-600 transition-colors">
-                      {isMe ? 'Me' : item.author} {item.recipientId && '• TUNNEL'}
-                    </span>
+                    <div className={`px-5 py-4 rounded-xl text-[11px] leading-relaxed break-words shadow-2xl max-w-[85%] border transition-all ${
+                      item.recipientId 
+                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.05)]' 
+                        : isMe 
+                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-[0_10px_30px_rgba(99,102,241,0.2)]' 
+                        : 'bg-[var(--surface-color)] border-[var(--border-color)] text-[var(--text-color)]'
+                    }`}>
+                      {item.text}
+                    </div>
                   </div>
                 );
-              }) : (
-                <div className="h-full flex flex-col items-center justify-center text-zinc-900 space-y-4 opacity-40">
-                  <LucideMessageSquare className="w-12 h-12 md:w-16 md:h-16" />
-                  <p className="text-[8px] md:text-[10px] font-black uppercase tracking-[0.4em]">Mesh Quiet</p>
-                </div>
-              )
+              })
             ) : onlineUsers.map((u) => (
-              <button key={u.clientId} onClick={() => { setWhisperTarget(u); setActiveTab('chat'); }} className={`w-full flex items-center justify-between p-3 md:p-5 rounded-2xl md:rounded-[28px] border transition-all ${u.clientId === myId ? 'bg-white/5 border-transparent opacity-40 grayscale cursor-default' : 'bg-white/2 border-white/5 hover:border-indigo-500/40 hover:bg-white/5 hover:scale-[1.02]'}`}>
-                <div className="flex items-center gap-3 md:gap-4 overflow-hidden"><div className="w-8 h-8 md:w-10 md:h-10 shrink-0 rounded-full border-2 border-black shadow-lg" style={{ background: u.color }} /><span className="text-xs md:text-sm font-black text-zinc-300 truncate">{u.name} {u.clientId === myId && '(You)'}</span></div>
-                {u.clientId !== myId && <span className="text-[7px] md:text-[8px] font-black text-indigo-400 tracking-widest uppercase shrink-0">Direct tunnel</span>}
+              <button key={u.clientId} onClick={() => { setWhisperTarget(u); setActiveTab('chat'); }} className={`w-full flex items-center justify-between p-5 rounded-md border transition-all ${u.clientId === myId ? 'opacity-10 grayscale cursor-default' : 'bg-[var(--bg-color)] border-[var(--border-color)] hover:border-indigo-500/20 hover:bg-[var(--surface-color)]/50'}`}>
+                <div className="flex items-center gap-4"><div className="w-2.5 h-2.5 rounded-full border border-black shadow-inner" style={{ background: u.color }} /><span className="text-[11px] font-bold text-[var(--text-color)]/70 truncate uppercase tracking-widest">{u.name}</span></div>
+                {u.clientId !== myId && <span className="text-[7px] font-black text-indigo-500 tracking-[0.2em] uppercase border border-indigo-500/30 px-2 py-1 rounded-sm">OPEN_X_LINK</span>}
               </button>
             ))}
+            
+            {showScrollDown && (
+              <button onClick={() => scrollToBottom('smooth')} className="sticky bottom-2 left-1/2 -translate-x-1/2 p-2 bg-indigo-600 rounded-full shadow-2xl animate-bounce text-white border border-indigo-400/50">
+                <LucideChevronDown className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
-          <div className={`${isMobile ? 'p-4' : 'p-6'} bg-zinc-950/90 border-t border-white/5 backdrop-blur-md`}>
-            {whisperTarget && (
-              <div className="flex items-center justify-between px-4 py-2 mb-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-[8px] font-black text-amber-500 uppercase tracking-widest animate-pop">
-                <span>Direct Signal: {whisperTarget.name}</span>
-                <LucideX onClick={() => setWhisperTarget(null)} className="w-3 h-3 cursor-pointer hover:text-white" />
+          <div className="p-6 bg-[var(--surface-color)] border-t border-[var(--border-color)] backdrop-blur-3xl relative">
+            {typingUsers.length > 0 && (
+              <div className="absolute -top-6 left-6 flex items-center gap-2 animate-pop">
+                <div className="flex gap-1">
+                  <span className="w-1 h-1 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1 h-1 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
+                  <span className="w-1 h-1 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '400ms' }} />
+                </div>
+                <span className="text-[8px] font-black text-emerald-600 uppercase tracking-widest">
+                  {typingUsers[0].toUpperCase()} {typingUsers.length > 1 ? `& ${typingUsers.length - 1} OTHERS` : ''} RELAYING...
+                </span>
               </div>
             )}
-            <div className="relative flex items-center">
+            
+            {whisperTarget && (
+              <div className="flex items-center justify-between px-4 py-2 mb-3 bg-amber-500/5 border border-amber-500/20 rounded-md text-[9px] font-bold text-amber-600 uppercase tracking-[0.3em] animate-pop">
+                SECURE_TUNNEL::{whisperTarget.name.toUpperCase()}
+                <LucideX onClick={() => setWhisperTarget(null)} className="w-3.5 h-3.5 cursor-pointer hover:text-rose-500 transition-colors" />
+              </div>
+            )}
+            
+            <div className="relative flex items-center group">
               <textarea 
                 rows={1} 
                 value={message} 
-                onChange={e => setMessage(e.target.value)} 
+                onChange={e => handleTyping(e.target.value)} 
                 onKeyDown={e => { if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }} 
-                placeholder="Broadcast signal..." 
-                className={`w-full bg-black border border-white/10 rounded-2xl md:rounded-[28px] ${isMobile ? 'px-4 py-3 pr-12' : 'px-6 py-5 pr-16'} text-xs md:text-sm focus:outline-none focus:border-indigo-500/40 text-white placeholder:text-zinc-800 resize-none min-h-[48px] md:min-h-[64px] max-h-[120px] leading-relaxed transition-all`} 
+                placeholder="ENCRYPT_PAYLOAD_DATA..." 
+                className="w-full bg-[var(--bg-color)] border border-[var(--border-color)] rounded-xl px-6 py-5 pr-14 text-[11px] focus:outline-none focus:border-indigo-500/40 text-[var(--text-color)] placeholder:text-zinc-500 resize-none min-h-[64px] transition-all shadow-inner font-mono" 
               />
-              <button 
-                type="button" 
-                onClick={() => handleSubmit()}
-                className={`absolute ${isMobile ? 'right-1.5 bottom-1.5 p-2.5' : 'right-2 bottom-2 p-4'} bg-indigo-600 rounded-xl md:rounded-[22px] text-white shadow-3xl active:scale-90 hover:bg-indigo-500 transition-all`}
-              >
-                <LucideSend className="w-4 h-4 md:w-5 md:h-5" />
+              <button onClick={() => handleSubmit()} className="absolute right-3 bottom-3 p-3.5 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-white active:scale-95 transition-all shadow-xl group-hover:shadow-[0_0_20px_rgba(79,70,229,0.3)]">
+                <LucideSend className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -187,10 +209,9 @@ const ChatOverlay: React.FC<ChatOverlayProps> = ({ chatHistory, onSendChatMessag
   );
 
   if (isFloating) return content;
-
   return (
-    <Draggable nodeRef={draggableRef} handle=".chat-handle" disabled={isResizing || isMobile}>
-      <div ref={draggableRef} className={`fixed ${isMobile ? 'bottom-6 right-6' : 'bottom-8 right-8'} z-[2000] transition-opacity duration-500 ${isMiniMode ? 'opacity-20 pointer-events-none' : 'opacity-100'}`}>
+    <Draggable nodeRef={draggableRef} handle=".chat-handle" disabled={isMobile}>
+      <div ref={draggableRef} className={`fixed bottom-10 right-10 z-[2000] transition-opacity duration-600 ${isMiniMode ? 'opacity-5 pointer-events-none' : 'opacity-100'}`}>
         {content}
       </div>
     </Draggable>

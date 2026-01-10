@@ -1,5 +1,4 @@
-
-export type ElementType = 'text' | 'image' | 'doodle' | 'voice' | 'video' | 'file' | 'ai-chat' | 'poll';
+export type ElementType = 'text' | 'image' | 'doodle' | 'voice' | 'video' | 'poll';
 
 export interface SpatialElement {
   id: string;
@@ -14,22 +13,13 @@ export interface SpatialElement {
   color?: string; 
   isEphemeral?: boolean; 
   metadata?: {
-    fileName?: string;
-    fileSize?: number;
-    fileType?: string;
-    totalChunks?: number;
-    aspectRatio?: string;
-    imageSize?: string;
-    isAiGenerated?: boolean;
-    prompt?: string;
-    groundingUrls?: Array<{ title: string; uri: string }>;
     isRainbow?: boolean;
     isGhost?: boolean;
     isNeon?: boolean;
     width?: number;
     height?: number;
     pollOptions?: string[];
-    votes?: Record<string, number>; // clientId -> optionIndex
+    votes?: Record<string, number>; 
   };
 }
 
