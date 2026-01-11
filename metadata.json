@@ -1,18 +1,5 @@
 {
-  "name": "Spatial Hub | Global Mesh OS",
-  "description": "A serverless, open-world P2P spatial playground. Deployable as a web app, APK, and desktop software for Windows/Mac/Linux.",
-  "requestFramePermissions": [
-    "microphone",
-    "camera",
-    "geolocation"
-  ],
-  "platforms": [
-    "web",
-    "android",
-    "ios",
-    "windows",
-    "macos",
-    "linux"
-  ],
-  "category": "Productivity / Social"
+  "name": "ResumeAI - Professional Resume Builder",
+  "description": "An AI-powered resume builder that helps you craft tailored, professional resumes using Gemini to align your experience with specific job descriptions and highlight transferable skills.",
+  "requestFramePermissions": []
 }

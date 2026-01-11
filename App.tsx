@@ -1,368 +1,188 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import * as Y from 'yjs';
-import { WebrtcProvider } from 'y-webrtc';
-import Draggable from 'react-draggable';
-import { getRoomInfoFromHash, updateHash } from './utils/crypto';
-import { SpatialElement, CursorState, OnlineUser } from './types';
-import Canvas from './components/Canvas';
-import ChatOverlay from './components/ChatOverlay';
-import { 
-  LucideArrowRight, 
-  LucideUsers, 
-  LucideSun, 
-  LucideMoon, 
-  LucideGripHorizontal,
-  LucideAppWindow,
-  LucideMinimize2,
-  LucideRefreshCw,
-  LucideWifi,
-  LucideWifiOff,
-  LucideShieldCheck,
-  LucideTerminal,
-  LucideCommand,
-  LucideActivity,
-  LucideZap
-} from 'lucide-react';
-
-const EPHEMERAL_TTL = 5000; 
+import React, { useState } from 'react';
+import { INITIAL_RESUME_DATA } from './constants';
+import { ResumeData, ResumeTemplate, ResumeOrientation } from './types';
+import ResumeEditor from './components/ResumeEditor';
+import ResumePreview from './components/ResumePreview';
+import AIAssistant from './components/AIAssistant';
+import { geminiService } from './services/geminiService';
 
 const App: React.FC = () => {
-  const [userName, setUserName] = useState<string | null>(() => localStorage.getItem('nexus-username'));
-  const [tempName, setTempName] = useState('');
-  const [yDoc] = useState(() => new Y.Doc());
-  const [provider, setProvider] = useState<WebrtcProvider | null>(null);
-  const [elements, setElements] = useState<SpatialElement[]>([]);
-  const [chatHistory, setChatHistory] = useState<any[]>([]);
-  const [cursors, setCursors] = useState<Record<string, CursorState>>({});
-  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
-  const [typingUsers, setTypingUsers] = useState<string[]>([]);
-  const [isDarkMode, setIsDarkMode] = useState(true);
-  const [isFloating, setIsFloating] = useState(false);
-  const [isMiniMode, setIsMiniMode] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
-  const [peerCount, setPeerCount] = useState(0);
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  const [reconnectCounter, setReconnectCounter] = useState(0);
-  const [lastPulse, setLastPulse] = useState(Date.now());
+  const [resumeData, setResumeData] = useState<ResumeData>(INITIAL_RESUME_DATA);
+  const [template, setTemplate] = useState<ResumeTemplate>(ResumeTemplate.CLASSIC);
+  const [orientation, setOrientation] = useState<ResumeOrientation>(ResumeOrientation.PORTRAIT);
+  const [showAI, setShowAI] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
 
-  const refs = {
-    header: useRef<HTMLDivElement>(null),
-    cluster: useRef<HTMLDivElement>(null),
-    status: useRef<HTMLDivElement>(null),
-    chat: useRef<HTMLDivElement>(null),
-    lastCursor: useRef<number>(0),
-    lastUserCount: useRef<number>(0),
-    reconnectTimer: useRef<number | null>(null)
+  const handlePrint = () => {
+    window.print();
   };
 
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  const handleApplyAI = (updates: Partial<ResumeData>) => {
+    setResumeData(prev => ({ ...prev, ...updates }));
+  };
 
-  useEffect(() => {
-    const root = document.documentElement;
-    if (isDarkMode) {
-      document.body.classList.remove('light-theme');
-      root.style.setProperty('--bg-color', '#000000');
-    } else {
-      document.body.classList.add('light-theme');
-      root.style.setProperty('--bg-color', '#f8fafc');
-    }
-  }, [isDarkMode]);
-
-  const ephemeralGc = useCallback(() => {
-    const yMap = yDoc.getMap('elements');
-    const now = Date.now();
-    yDoc.transact(() => {
-      yMap.forEach((val: any, key: string) => {
-        if (val.isEphemeral && (now - val.timestamp >= EPHEMERAL_TTL)) {
-          yMap.delete(key);
-        }
-      });
-    });
-  }, [yDoc]);
-
-  useEffect(() => {
-    const interval = setInterval(ephemeralGc, 3000);
-    return () => clearInterval(interval);
-  }, [ephemeralGc]);
-
-  const addSystemMessage = useCallback((text: string) => {
-    const yChat = yDoc.getArray('chatHistory');
-    yChat.push([{
-      id: 'sys-' + Math.random().toString(36).substring(7),
-      author: 'SYSTEM',
-      authorId: 'system',
-      text,
-      isSystem: true,
-      timestamp: Date.now()
-    }]);
-  }, [yDoc]);
-
-  const triggerReconnect = useCallback(() => {
-    setReconnectCounter(prev => prev + 1);
-    addSystemMessage("MESH_TUNNEL::AUTO_RECOVERY_ENGAGED");
-  }, [addSystemMessage]);
-
-  useEffect(() => {
-    if (!userName) return;
-
-    const info = getRoomInfoFromHash();
-    updateHash(info);
-
-    const webrtcProvider = new WebrtcProvider(
-      info.roomId,
-      yDoc,
-      {
-        signaling: [
-          'wss://y-webrtc-signaling-us.herokuapp.com',
-          'wss://y-webrtc-signaling-eu.herokuapp.com',
-          'wss://signaling.yjs.dev'
-        ],
-        peerOpts: {
-          config: {
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' },
-              { urls: 'stun:stun2.l.google.com:19302' }
-            ]
-          }
-        }
-      }
-    );
-
-    const yElements = yDoc.getMap('elements');
-    const yChat = yDoc.getArray('chatHistory');
-
-    const syncElements = () => {
-      const myId = yDoc.clientID.toString();
-      const all = Array.from(yElements.values() as any);
-      setElements(all.filter((el: any) => 
-        !el.recipientId || el.recipientId === myId || el.authorId === myId
-      ) as SpatialElement[]);
-      setLastPulse(Date.now());
-    };
-
-    const syncChat = () => {
-      setChatHistory(yChat.toArray().slice(-100));
-      setLastPulse(Date.now());
-    };
-
-    yElements.observe(syncElements);
-    yChat.observe(syncChat);
-    
-    syncElements();
-    syncChat();
-
-    const myColor = `hsl(${Math.random() * 360}, 80%, 65%)`;
-    webrtcProvider.awareness.setLocalStateField('user', {
-      name: userName,
-      color: myColor,
-      clientId: yDoc.clientID.toString()
-    });
-
-    webrtcProvider.on('status', (e: { connected: boolean }) => {
-      setIsConnected(e.connected);
-      if (e.connected) {
-        addSystemMessage(`UPLINK::${userName.toUpperCase()}::READY`);
-      } else {
-        // If we lose signaling for more than 5s, try to bounce back
-        if (refs.reconnectTimer.current) window.clearTimeout(refs.reconnectTimer.current);
-        refs.reconnectTimer.current = window.setTimeout(() => {
-          if (!isConnected) triggerReconnect();
-        }, 5000);
-      }
-    });
-
-    const peerCheck = setInterval(() => {
-      const conns = webrtcProvider.room?.webrtcConns;
-      setPeerCount(conns ? conns.size : 0);
-    }, 2000);
-
-    webrtcProvider.awareness.on('change', () => {
-      const states = webrtcProvider.awareness.getStates();
-      const nextCursors: Record<string, CursorState> = {};
-      const nextUsers: OnlineUser[] = [];
-      const typing: string[] = [];
-
-      states.forEach((s: any, id: number) => {
-        if (s.user) {
-          nextUsers.push({ clientId: id.toString(), name: s.user.name, color: s.user.color });
-          if (id !== yDoc.clientID) {
-            if (s.cursor) nextCursors[id] = { ...s.cursor, name: s.user.name, color: s.user.color };
-            if (s.typing) typing.push(s.user.name);
-          }
-        }
-      });
-
-      setCursors(nextCursors);
-      setOnlineUsers(nextUsers);
-      setTypingUsers(typing);
-    });
-
-    setProvider(webrtcProvider);
-    return () => { 
-      clearInterval(peerCheck);
-      webrtcProvider.destroy(); 
-      if (refs.reconnectTimer.current) window.clearTimeout(refs.reconnectTimer.current);
-    };
-  }, [yDoc, userName, addSystemMessage, reconnectCounter, triggerReconnect, isConnected]);
-
-  const addElement = useCallback((el: Omit<SpatialElement, 'author' | 'timestamp' | 'authorId'>) => {
-    yDoc.transact(() => {
-      const yMap = yDoc.getMap('elements');
-      const payload: SpatialElement = {
-        ...el,
-        timestamp: Date.now(),
-        author: userName || 'Anonymous',
-        authorId: yDoc.clientID.toString()
-      };
-      yMap.set(payload.id, payload as any);
-    });
-  }, [yDoc, userName]);
-
-  const addChatMessage = useCallback((text: string, whisperTargetId?: string) => {
-    const user = provider?.awareness.getLocalState()?.user;
-    yDoc.transact(() => {
-      const yChat = yDoc.getArray('chatHistory');
-      yChat.push([{
-        id: Math.random().toString(36).substring(7),
-        author: userName || 'Anonymous',
-        authorId: yDoc.clientID.toString(),
-        authorColor: user?.color || '#6366f1',
-        text,
-        recipientId: whisperTargetId,
-        recipientName: onlineUsers.find(u => u.clientId === whisperTargetId)?.name,
-        timestamp: Date.now()
-      }]);
-    });
-  }, [yDoc, userName, provider, onlineUsers]);
-
-  const setTyping = useCallback((isTyping: boolean) => {
-    provider?.awareness.setLocalStateField('typing', isTyping);
-  }, [provider]);
-
-  const updateCursor = useCallback((x: number, y: number) => {
-    const now = Date.now();
-    if (now - refs.lastCursor.current < 45) return; 
-    refs.lastCursor.current = now;
-    provider?.awareness.setLocalStateField('cursor', { x, y });
-  }, [provider]);
-
-  const deleteElement = useCallback((id: string) => {
-    yDoc.transact(() => {
-      yDoc.getMap('elements').delete(id);
-    });
-  }, [yDoc]);
-
-  const handleFloating = async () => {
-    if (!('documentPictureInPicture' in window)) return alert("Nexus PiP requires a modern Chrome-based browser.");
+  const handleImportResume = async () => {
+    if (!importText.trim()) return;
+    setIsImporting(true);
     try {
-      const pip = await (window as any).documentPictureInPicture.requestWindow({ width: 420, height: 720 });
-      setIsFloating(true);
-      [...document.styleSheets].forEach(s => {
-        try {
-          const el = document.createElement('style');
-          el.textContent = Array.from(s.cssRules).map(r => r.cssText).join('');
-          pip.document.head.appendChild(el);
-        } catch { if (s.href) { 
-          const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = s.href; pip.document.head.appendChild(l); 
-        }}
-      });
-      if (refs.chat.current) pip.document.body.appendChild(refs.chat.current);
-      pip.addEventListener('pagehide', () => {
-        setIsFloating(false);
-        if (refs.chat.current) document.body.appendChild(refs.chat.current);
-      });
-    } catch (e) { console.error("PiP_INIT_FAILED:", e); }
+      const parsedData = await geminiService.parseResume(importText);
+      setResumeData(prev => ({
+        ...prev,
+        ...parsedData,
+        contact: parsedData.contact ? { ...prev.contact, ...parsedData.contact } : prev.contact,
+        experience: parsedData.experience ? (parsedData.experience as any) : prev.experience,
+        education: parsedData.education ? (parsedData.education as any) : prev.education,
+        skillCategories: parsedData.skillCategories ? (parsedData.skillCategories as any) : prev.skillCategories,
+      }));
+      setShowImport(false);
+      setImportText('');
+    } catch (error) {
+      alert("Failed to parse resume. Please check your connection or try again.");
+    } finally {
+      setIsImporting(false);
+    }
   };
-
-  if (!userName) {
-    return (
-      <div className="h-screen w-full flex items-center justify-center bg-[var(--bg-color)] transition-colors duration-500 overflow-hidden p-6 relative">
-        <div className="absolute inset-0 grid-bg opacity-10 pointer-events-none" />
-        <div className="w-full max-w-lg p-12 glass rounded-3xl border border-indigo-500/20 shadow-[0_0_80px_rgba(99,102,241,0.15)] text-center animate-pop font-mono">
-          <LucideZap className="w-16 h-16 text-indigo-500 mx-auto mb-8 animate-pulse" />
-          <h1 className="text-4xl font-black text-[var(--text-color)] tracking-tighter mb-2 uppercase">NEXUS_ACCESS</h1>
-          <p className="text-indigo-400/40 mb-10 uppercase tracking-[0.6em] text-[10px] font-bold">P2P Mesh Overlay</p>
-          <form onSubmit={e => { e.preventDefault(); if (tempName.trim()) { localStorage.setItem('nexus-username', tempName.trim()); setUserName(tempName.trim()); } }} className="space-y-6">
-            <input autoFocus value={tempName} onChange={e => setTempName(e.target.value)} placeholder="ENTER_NODE_ID" className="w-full bg-[var(--surface-color)] border border-[var(--border-color)] rounded-2xl p-6 text-[var(--text-color)] text-xl text-center outline-none focus:border-indigo-500 transition-all font-mono placeholder:text-zinc-800" />
-            <button className="w-full bg-indigo-600 hover:bg-indigo-500 py-6 rounded-2xl text-white font-black text-lg flex items-center justify-center gap-4 active:scale-[0.98] transition-all uppercase tracking-[0.2em] shadow-2xl">
-              Sync Mesh <LucideArrowRight className="w-6 h-6" />
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  const signalStatus = isConnected ? (peerCount > 0 ? 'CONVERGED' : 'SCANNING') : 'OFFLINE';
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[var(--bg-color)] transition-colors duration-500 font-sans selection:bg-indigo-500/40">
-      <div className="absolute inset-0 grid-bg opacity-[0.05] pointer-events-none" />
-      
-      <Draggable nodeRef={refs.header} handle=".drag" disabled={isMobile}>
-        <div ref={refs.header} className={`absolute z-[3000] pointer-events-auto font-mono ${isMobile ? 'top-4 left-4 right-4' : 'top-8 left-10'}`}>
-          <div className="flex items-center gap-5 px-8 py-5 bg-[var(--surface-color)]/95 rounded-2xl shadow-2xl border border-[var(--border-color)] backdrop-blur-3xl">
-            <div className="drag cursor-grab active:cursor-grabbing p-1 text-zinc-800 hover:text-indigo-400 transition-colors hidden md:block"><LucideGripHorizontal className="w-5 h-5" /></div>
-            <div className={`flex items-center gap-4 ${isConnected ? 'text-emerald-500' : 'text-rose-500'}`}>
-              <div className="relative flex h-3 w-3">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isConnected ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                <span className={`relative inline-flex rounded-full h-3 w-3 ${isConnected ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+    <div className={`min-h-screen flex flex-col bg-gray-100 ${orientation === ResumeOrientation.LANDSCAPE ? 'landscape-layout' : ''}`}>
+      {/* Navbar */}
+      <nav className="bg-white border-b px-6 py-3 flex items-center justify-between no-print sticky top-0 z-50">
+        <div className="flex items-center gap-2">
+          <div className="bg-blue-600 p-1.5 rounded-lg">
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <span className="text-xl font-bold tracking-tight text-gray-900 hidden sm:inline">ResumeAI</span>
+        </div>
+
+        <div className="flex items-center gap-2 sm:gap-4">
+          <button
+            onClick={() => setShowImport(true)}
+            className="text-xs sm:text-sm font-medium text-gray-600 hover:text-blue-600 transition flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+            Import
+          </button>
+
+          <select
+            className="bg-gray-50 border border-gray-300 text-gray-900 text-xs sm:text-sm rounded-lg p-1.5 sm:p-2"
+            value={template}
+            onChange={(e) => setTemplate(e.target.value as ResumeTemplate)}
+          >
+            {Object.values(ResumeTemplate).map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+
+          <select
+            className="bg-gray-50 border border-gray-300 text-gray-900 text-xs sm:text-sm rounded-lg p-1.5 sm:p-2"
+            value={orientation}
+            onChange={(e) => setOrientation(e.target.value as ResumeOrientation)}
+          >
+            {Object.values(ResumeOrientation).map(o => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </select>
+          
+          <button
+            onClick={() => setShowAI(!showAI)}
+            className={`hidden sm:flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg font-medium transition ${showAI ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04M12 21a9.003 9.003 0 008.367-5.633M12 21a9.003 9.003 0 01-8.367-5.633M12 21c-4.97 0-9-4.03-9-9s4.03-9 9-9c.854 0 1.673.118 2.45.338" />
+            </svg>
+            <span className="hidden sm:inline">ATS Scan</span>
+          </button>
+
+          <button
+            onClick={handlePrint}
+            className="bg-blue-600 text-white px-4 sm:px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+            </svg>
+            <span className="hidden sm:inline">Print</span>
+          </button>
+        </div>
+      </nav>
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex overflow-hidden">
+        {/* Sidebar: Editor */}
+        <div className="w-[300px] sm:w-[450px] flex-shrink-0 bg-white border-r overflow-hidden flex flex-col no-print">
+          <ResumeEditor data={resumeData} onChange={setResumeData} />
+        </div>
+
+        {/* Center: Preview */}
+        <div className="flex-1 bg-gray-200 overflow-y-auto p-4 sm:p-8 scroll-smooth flex justify-center print:bg-white print:p-0 print:overflow-visible">
+          <div className="origin-top transition-all duration-300 print:scale-100">
+            <ResumePreview data={resumeData} template={template} orientation={orientation} />
+          </div>
+        </div>
+
+        {/* Right Sidebar: AI Assistant */}
+        {showAI && (
+          <div className="w-[300px] sm:w-[350px] flex-shrink-0 no-print">
+            <AIAssistant resumeData={resumeData} onApplyOptimizedData={handleApplyAI} />
+          </div>
+        )}
+      </main>
+
+      {/* Import Modal */}
+      {showImport && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 no-print">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-6 border-b flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Import Resume Text</h2>
+                <p className="text-sm text-gray-500">Our AI will automatically structure your data.</p>
               </div>
-              <span className="text-[10px] font-black uppercase tracking-[0.4em]">{`MESH_${signalStatus}`}</span>
+              <button onClick={() => setShowImport(false)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
             </div>
-            <div className="flex items-center gap-3">
-               <div key={lastPulse} className="w-2 h-2 rounded-full bg-indigo-500 animate-ping opacity-30" />
-               <button onClick={triggerReconnect} className="p-2 hover:bg-white/5 rounded-md text-zinc-600 hover:text-indigo-400 transition-all"><LucideRefreshCw className="w-4 h-4" /></button>
+            <div className="p-6">
+              <textarea
+                className="w-full h-64 p-4 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-sm font-mono text-gray-900 outline-none"
+                placeholder="Paste your existing resume text here..."
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+              />
+              <div className="mt-6 flex justify-end gap-3">
+                <button onClick={() => setShowImport(false)} className="px-4 py-2 text-gray-600 font-medium hover:bg-gray-100 rounded-lg">Cancel</button>
+                <button
+                  disabled={isImporting || !importText.trim()}
+                  onClick={handleImportResume}
+                  className="px-6 py-2 rounded-lg font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 transition flex items-center gap-2"
+                >
+                  {isImporting ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      Parsing...
+                    </>
+                  ) : 'Structure with AI'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      </Draggable>
-
-      <Draggable nodeRef={refs.cluster} handle=".drag" disabled={isMobile}>
-        <div ref={refs.cluster} className={`absolute z-[3000] pointer-events-auto ${isMobile ? 'bottom-4 right-4' : 'top-8 right-10'}`}>
-          <div className="flex items-center gap-4 px-8 py-5 bg-[var(--surface-color)]/95 rounded-2xl shadow-2xl border border-[var(--border-color)] backdrop-blur-3xl">
-            <button onClick={() => setIsMiniMode(!isMiniMode)} className={`p-2 transition-all ${isMiniMode ? 'text-indigo-400' : 'text-zinc-600 hover:text-indigo-400'}`}><LucideMinimize2 className="w-6 h-6" /></button>
-            <button onClick={handleFloating} className="p-2 text-zinc-600 hover:text-white transition-all"><LucideAppWindow className="w-6 h-6" /></button>
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 transition-colors ${!isDarkMode ? 'text-indigo-500' : 'text-zinc-600'}`}>{isDarkMode ? <LucideSun className="w-6 h-6" /> : <LucideMoon className="w-6 h-6" />}</button>
-            <div className="drag cursor-grab active:cursor-grabbing text-zinc-800 ml-2 hidden md:block"><LucideGripHorizontal className="w-4 h-4" /></div>
-          </div>
-        </div>
-      </Draggable>
-
-      {!isMiniMode && (
-        <Canvas 
-          elements={elements} 
-          cursors={cursors} 
-          onAddElement={addElement} 
-          onUpdateElement={() => {}} 
-          onCursorMove={updateCursor} 
-          onDeleteElement={deleteElement} 
-          yDoc={yDoc} 
-          isDarkMode={isDarkMode} 
-        />
       )}
-      
-      <div ref={refs.chat} className={isFloating ? "h-full w-full" : ""}>
-        <ChatOverlay 
-          chatHistory={chatHistory}
-          onSendChatMessage={addChatMessage} 
-          onTyping={setTyping}
-          typingUsers={typingUsers}
-          onlineUsers={onlineUsers} 
-          myId={yDoc.clientID.toString()} 
-          isDarkMode={isDarkMode} 
-          isFloating={isFloating} 
-          isMiniMode={isMiniMode} 
-          signalConnected={isConnected}
-          peerCount={peerCount}
-        />
-      </div>
+
+      <style>{`
+        @media print {
+          @page {
+            size: ${orientation === ResumeOrientation.PORTRAIT ? 'A4 portrait' : 'A4 landscape'};
+            margin: 0;
+          }
+          body {
+            background: white !important;
+          }
+        }
+      `}</style>
     </div>
   );
 };
