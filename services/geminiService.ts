@@ -5,7 +5,7 @@ import { ResumeData, TailoredResumeResponse } from "../types";
 export class GeminiService {
   private getClient() {
     // API KEY provided by the user
-    const apiKey = 'AIzaSyDTC_wqEaXeNZd75y8upMhqS7dqxfnvlEI';
+    const apiKey = '';
     return new GoogleGenAI({ apiKey });
   }
 
